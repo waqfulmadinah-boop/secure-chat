@@ -1,0 +1,260 @@
+// Secure Chat Server — নির্দিষ্ট Gmail + Password ছাড়া প্রবেশ অসম্ভব
+require('dotenv').config();
+const express = require('express');
+const http = require('http');
+const path = require('path');
+const fs = require('fs');
+const helmet = require('helmet');
+const cors = require('cors');
+const rateLimit = require('express-rate-limit');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { Server } = require('socket.io');
+
+const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET || 'change-me';
+let ALLOWED_EMAILS = (process.env.ALLOWED_EMAILS || '')
+  .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+const ADMIN_EMAIL = 'waqfulmadinah@gmail.com'; // প্রধান অ্যাডমিন (৩০ জন ম্যানেজ করবে)
+const MAX_USERS = 30;
+
+const USERS_FILE = path.join(__dirname, 'users.json');
+const ENV_FILE = path.join(__dirname, '.env');
+
+function persistAllowedEmails() {
+  try {
+    let env = fs.existsSync(ENV_FILE) ? fs.readFileSync(ENV_FILE, 'utf8') : '';
+    const line = `ALLOWED_EMAILS=${ALLOWED_EMAILS.join(',')}`;
+    if (/^ALLOWED_EMAILS=.*$/m.test(env)) env = env.replace(/^ALLOWED_EMAILS=.*$/m, line);
+    else env += (env.endsWith('\n') ? '' : '\n') + line + '\n';
+    // DEFAULT_PASSWORDS আপডেট না করলেও চলবে — users.json-ই সত্য
+    fs.writeFileSync(ENV_FILE, env, 'utf8');
+  } catch (e) { console.error('persist .env error', e.message); }
+}
+
+// ---- User store (users.json) ----
+function loadUsers() {
+  try {
+    if (fs.existsSync(USERS_FILE)) return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+  } catch (e) { console.error('users.json read error', e.message); }
+  return {};
+}
+function saveUsers(u) { fs.writeFileSync(USERS_FILE, JSON.stringify(u, null, 2), 'utf8'); }
+
+let users = loadUsers();
+// প্রথম রানে .env এর DEFAULT_PASSWORDS থেকে allowlist user তৈরি
+(function seed() {
+  const defs = (process.env.DEFAULT_PASSWORDS || '').split(',').map(s => s.trim()).filter(Boolean);
+  let changed = false;
+  for (const d of defs) {
+    const i = d.indexOf(':');
+    if (i < 0) continue;
+    const email = d.slice(0, i).trim().toLowerCase();
+    const pass = d.slice(i + 1);
+    if (!ALLOWED_EMAILS.includes(email)) continue;
+    if (!users[email]) {
+      users[email] = { hash: bcrypt.hashSync(pass, 10), name: email.split('@')[0], createdAt: Date.now() };
+      changed = true;
+    }
+  }
+  // allowlist-এ আছে কিন্তু users.json-এ নেই এমন email-কে block রাখা হবে (login দিতে পারবে না যতক্ষণ pass সেট না হয়)
+  if (changed) saveUsers(users);
+  console.log('Allowed emails:', ALLOWED_EMAILS.join(', ') || '(খালি!)');
+})();
+
+const app = express();
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(cors());
+app.use(express.json({ limit: '2mb' }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+const loginLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 30, message: { error: 'অনেকবার চেষ্টা করেছেন। ১০ মিনিট পর আবার চেষ্টা করুন।' } });
+
+// ---- Auth helpers ----
+function signToken(email) {
+  return jwt.sign({ email }, JWT_SECRET, { expiresIn: '7d' });
+}
+function adminMiddleware(req, res, next) {
+  if (req.email !== ADMIN_EMAIL) return res.status(403).json({ error: 'শুধু অ্যাডমিন (' + ADMIN_EMAIL + ') এই কাজ করতে পারবে।' });
+  next();
+}
+function authMiddleware(req, res, next) {
+  const h = req.headers.authorization || '';
+  const token = h.startsWith('Bearer ') ? h.slice(7) : null;
+  if (!token) return res.status(401).json({ error: 'লগইন প্রয়োজন' });
+  try {
+    const p = jwt.verify(token, JWT_SECRET);
+    if (!ALLOWED_EMAILS.includes(p.email.toLowerCase())) return res.status(403).json({ error: 'অনুমতি নেই' });
+    req.email = p.email.toLowerCase();
+    next();
+  } catch {
+    return res.status(401).json({ error: 'সেশন শেষ। আবার লগইন করুন।' });
+  }
+}
+
+// ---- Routes ----
+// 1) Login — শুধু allowlist email + সঠিক password
+app.post('/api/login', loginLimiter, (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const password = String(req.body.password || '');
+
+  if (!email.endsWith('@gmail.com')) return res.status(403).json({ error: 'শুধুমাত্র নির্দিষ্ট Gmail দিয়ে প্রবেশ করা যাবে।' });
+  if (!ALLOWED_EMAILS.includes(email)) {
+    console.log('Blocked login attempt:', email);
+    return res.status(403).json({ error: 'এই Gmail-এর প্রবেশাধিকার নেই।' });
+  }
+  const u = users[email];
+  if (!u) return res.status(403).json({ error: 'এই অ্যাকাউন্ট এখনো সক্রিয় করা হয়নি। Admin-এর সাথে যোগাযোগ করুন।' });
+  if (!bcrypt.compareSync(password, u.hash)) return res.status(401).json({ error: 'ভুল পাসওয়ার্ড।' });
+
+  const token = signToken(email);
+  res.json({ token, email, name: u.name, allowedUsers: ALLOWED_EMAILS.map(e => ({ email: e, name: (users[e] || {}).name || e.split('@')[0], online: onlineMap.has(e) })) });
+});
+
+// 2) নিজের তথ্য
+app.get('/api/me', authMiddleware, (req, res) => {
+  const u = users[req.email] || {};
+  res.json({ email: req.email, name: u.name || req.email.split('@')[0] });
+});
+
+// 3) পাসওয়ার্ড বদল (লগইন থাকা অবস্থায়)
+app.post('/api/change-password', authMiddleware, (req, res) => {
+  const { oldPassword, newPassword } = req.body;
+  if (!newPassword || newPassword.length < 6) return res.status(400).json({ error: 'নতুন পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।' });
+  const u = users[req.email];
+  if (!bcrypt.compareSync(String(oldPassword || ''), u.hash)) return res.status(401).json({ error: 'পুরনো পাসওয়ার্ড ভুল।' });
+  u.hash = bcrypt.hashSync(String(newPassword), 10);
+  saveUsers(users);
+  res.json({ ok: true, message: 'পাসওয়ার্ড বদলে গেছে।' });
+});
+
+// 4) অ্যাডমিন — ৩০ জন ইউজার ম্যানেজমেন্ট
+app.get('/api/admin/users', authMiddleware, adminMiddleware, (req, res) => {
+  res.json({
+    max: MAX_USERS,
+    count: ALLOWED_EMAILS.length,
+    admin: ADMIN_EMAIL,
+    users: ALLOWED_EMAILS.map(e => ({
+      email: e, name: (users[e] || {}).name || e.split('@')[0],
+      online: onlineMap.has(e), createdAt: (users[e] || {}).createdAt || null
+    }))
+  });
+});
+app.post('/api/admin/add-user', authMiddleware, adminMiddleware, (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const password = String(req.body.password || '');
+  const name = String(req.body.name || '').trim() || email.split('@')[0];
+  if (!email.endsWith('@gmail.com')) return res.status(400).json({ error: 'শুধু Gmail (@gmail.com) যোগ করা যাবে।' });
+  if (!email.includes('@') || email.length < 10) return res.status(400).json({ error: 'সঠিক Gmail দিন।' });
+  if (ALLOWED_EMAILS.includes(email)) return res.status(400).json({ error: 'এই Gmail আগেই আছে।' });
+  if (ALLOWED_EMAILS.length >= MAX_USERS) return res.status(400).json({ error: `সর্বোচ্চ ${MAX_USERS} জন। একজনকে সরিয়ে আবার যোগ করুন।` });
+  if (!password || password.length < 6) return res.status(400).json({ error: 'পাসওয়ার্ড কমপক্ষে ৬ অক্ষর হতে হবে।' });
+  ALLOWED_EMAILS.push(email);
+  users[email] = { hash: bcrypt.hashSync(password, 10), name, createdAt: Date.now() };
+  saveUsers(users); persistAllowedEmails();
+  console.log('Admin added user:', email);
+  res.json({ ok: true, message: 'যোগ করা হয়েছে', email });
+});
+app.post('/api/admin/remove-user', authMiddleware, adminMiddleware, (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  if (email === ADMIN_EMAIL) return res.status(400).json({ error: 'অ্যাডমিন নিজেকে সরাতে পারবে না।' });
+  if (!ALLOWED_EMAILS.includes(email)) return res.status(404).json({ error: 'এই Gmail তালিকায় নেই।' });
+  ALLOWED_EMAILS = ALLOWED_EMAILS.filter(e => e !== email);
+  delete users[email];
+  saveUsers(users); persistAllowedEmails();
+  // force disconnect if online
+  const sid = onlineMap.get(email);
+  if (sid) { try { io.to(sid).emit('force-logout', { reason: 'আপনাকে তালিকা থেকে সরানো হয়েছে।' }); io.sockets.sockets.get(sid)?.disconnect(true); } catch {} }
+  res.json({ ok: true, message: 'সরানো হয়েছে', email });
+});
+app.post('/api/admin/reset-password', authMiddleware, adminMiddleware, (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const password = String(req.body.password || '');
+  if (!ALLOWED_EMAILS.includes(email)) return res.status(404).json({ error: 'তালিকায় নেই।' });
+  if (!password || password.length < 6) return res.status(400).json({ error: 'পাসওয়ার্ড ৬+ অক্ষর হতে হবে।' });
+  users[email] = { ...(users[email] || {}), hash: bcrypt.hashSync(password, 10), name: users[email]?.name || email.split('@')[0] };
+  saveUsers(users);
+  res.json({ ok: true, message: 'পাসওয়ার্ড রিসেট হয়েছে' });
+});
+
+// 5) চ্যাট হিস্ট্রি (সাধারণ — ডেমোর জন্য সার্ভার মেমরিতে)
+const messages = []; // {id, from, to(group|email), text, type, replyTo, at, expiresAt}
+app.get('/api/messages', authMiddleware, (req, res) => {
+  const now = Date.now();
+  const visible = messages.filter(m => !m.expiresAt || m.expiresAt > now)
+    .filter(m => m.to === 'group' || m.from === req.email || m.to === req.email)
+    .slice(-200);
+  res.json(visible);
+});
+
+// ---- Socket.io (realtime + call signaling) ----
+const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: '*' } });
+const onlineMap = new Map(); // email -> socketId
+
+io.use((socket, next) => {
+  try {
+    const token = socket.handshake.auth.token;
+    const p = jwt.verify(token, JWT_SECRET);
+    const email = p.email.toLowerCase();
+    if (!ALLOWED_EMAILS.includes(email)) return next(new Error('forbidden'));
+    socket.email = email;
+    next();
+  } catch { next(new Error('unauthorized')); }
+});
+
+io.on('connection', (socket) => {
+  const email = socket.email;
+  onlineMap.set(email, socket.id);
+  io.emit('presence', { email, online: true, onlineList: [...onlineMap.keys()] });
+
+  // পুরনো মেসেজে টিক আপডেট জানানো
+  socket.on('chat:message', (data = {}) => {
+    const text = String(data.text || '').slice(0, 2000);
+    if (!text.trim() && !data.voice) return;
+    const msg = {
+      id: 'm' + Date.now() + Math.floor(Math.random() * 9999),
+      from: email,
+      to: data.to || 'group',           // 'group' অথবা নির্দিষ্ট email
+      text, type: data.voice ? 'voice' : 'text',
+      voice: data.voice || null,         // {dataUrl, duration}
+      replyTo: data.replyTo || null,
+      at: Date.now(),
+      expiresAt: data.disappearSec ? Date.now() + data.disappearSec * 1000 : null
+    };
+    messages.push(msg);
+    if (messages.length > 1000) messages.splice(0, messages.length - 1000);
+    if (msg.to === 'group') io.emit('chat:message', msg);
+    else {
+      socket.emit('chat:message', msg);
+      const target = onlineMap.get(msg.to);
+      if (target) io.to(target).emit('chat:message', msg);
+    }
+    // ডেলিভারি টিক
+    socket.emit('chat:ack', { id: msg.id, status: 'sent' });
+  });
+
+  socket.on('chat:typing', (d = {}) => socket.broadcast.emit('chat:typing', { from: email, to: d.to || 'group', isTyping: !!d.isTyping }));
+  socket.on('chat:read', (d = {}) => socket.broadcast.emit('chat:read', { by: email, id: d.id }));
+
+  // --- WebRTC signaling (1-1 voice/video call) ---
+  socket.on('call:invite', (d = {}) => {
+    const target = onlineMap.get(d.to);
+    if (target) io.to(target).emit('call:invite', { from: email, kind: d.kind || 'video' });
+  });
+  socket.on('call:signal', (d = {}) => {
+    const target = onlineMap.get(d.to);
+    if (target) io.to(target).emit('call:signal', { from: email, signal: d.signal });
+  });
+  socket.on('call:end', (d = {}) => {
+    const target = onlineMap.get(d.to);
+    if (target) io.to(target).emit('call:end', { from: email });
+  });
+
+  socket.on('disconnect', () => {
+    if (onlineMap.get(email) === socket.id) onlineMap.delete(email);
+    io.emit('presence', { email, online: false, onlineList: [...onlineMap.keys()] });
+  });
+});
+
+server.listen(PORT, () => console.log(`Secure Chat চলছে: http://localhost:${PORT}`));

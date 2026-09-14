@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Secure Chat — প্রাইভেট হোয়াটসঅ্যাপ</title>
+<link rel="stylesheet" href="styles.css">
+<script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+<!-- ===== Login Screen (Allowlist Gmail + Password) ===== -->
+<div id="loginScreen" class="login-wrap">
+  <div class="login-card">
+    <div class="logo">🔒</div>
+    <h1>Secure Chat</h1>
+    <p class="sub">শুধুমাত্র অনুমোদিত Gmail দিয়ে প্রবেশ করা যাবে</p>
+    <input id="email" type="email" placeholder="আপনার Gmail (example@gmail.com)" autocomplete="username">
+    <div class="pass-wrap">
+      <input id="password" type="password" placeholder="পাসওয়ার্ড" autocomplete="current-password">
+      <button id="togglePass" type="button" title="দেখুন/লুকান">👁️</button>
+    </div>
+    <button id="loginBtn">প্রবেশ করুন</button>
+    <p id="loginError" class="error"></p>
+    <p class="hint">⚠️ বাইরের কেউ লগইন করতে পারবে না — শুধু অ্যাডমিন অনুমোদিত Gmail। Chrome / Edge ভয়েস টাইপিং-এর জন্য সেরা।</p>
+  </div>
+</div>
+
+<!-- ===== Main App ===== -->
+<div id="app" class="hidden">
+  <aside class="sidebar">
+    <div class="side-head">
+      <div class="me"><span id="meAvatar" class="avatar">A</span><div><b id="meName">—</b><small id="meEmail">—</small></div></div>
+      <div class="side-actions">
+        <button id="adminBtn" title="অ্যাডমিন (৩০ জন ম্যানেজ)" class="hidden">👑</button>
+        <button id="themeBtn" title="ডার্ক/লাইট">🌙</button>
+        <button id="statusBtn" title="স্ট্যাটাস">⭕</button>
+        <button id="logoutBtn" title="লগআউট">⏻</button>
+      </div>
+    </div>
+    <input id="search" placeholder="🔍 সার্চ (মেসেজ / নাম)...">
+    <div id="chatList" class="chat-list"></div>
+    <div class="side-foot"><small>🔐 End-to-End ধারণা • Disappearing • Voice</small></div>
+  </aside>
+
+  <main class="chat-pane">
+    <div class="chat-head">
+      <span id="peerAvatar" class="avatar">G</span>
+      <div class="peer-info"><b id="peerName">গ্রুপ চ্যাট</b><small id="peerStatus">—</small></div>
+      <div class="chat-tools">
+        <select id="disappear" title="Disappearing message">
+          <option value="">⏱️ Off</option>
+          <option value="60">⏱️ 1 মিনিট</option>
+          <option value="3600">⏱️ 1 ঘণ্টা</option>
+          <option value="86400">⏱️ 24 ঘণ্টা</option>
+        </select>
+        <button id="voiceCallBtn" title="ভয়েস কল">📞</button>
+        <button id="videoCallBtn" title="ভিডিও কল">🎥</button>
+      </div>
+    </div>
+
+    <div id="replyBar" class="reply-bar hidden">↩️ <span id="replyText"></span><button id="replyCancel">✕</button></div>
+    <div id="messages" class="messages"></div>
+    <div id="typingLine" class="typing-line"></div>
+
+    <!-- Voice typing panel -->
+    <div id="voicePanel" class="voice-panel hidden">
+      <div class="wave"><span></span><span></span><span></span><span></span><span></span></div>
+      <div class="voice-info">
+        <b id="voiceState">🎙️ শুনছি... বলুন</b>
+        <small>ভাষা: <select id="voiceLang">
+          <option value="bn-BD">বাংলা (BD)</option>
+          <option value="bn-IN">বাংলা (IN)</option>
+          <option value="en-US">English (US)</option>
+          <option value="hi-IN">हिन्दी</option>
+          <option value="ar-SA">العربية</option>
+        </select>
+        <label><input type="checkbox" id="autoSend"> "পাঠাও" বললে অটো-সেন্ড</label>
+        <label><input type="checkbox" id="autoPunct" checked> অটো-দাঁড়ি/প্রশ্নবোধক</label></small>
+        <div id="voiceInterim" class="interim"></div>
+        <small class="cmd-hint">কমান্ড: "পাঠাও" = সেন্ড • "মুছে ফেলো" = ক্লিয়ার • "নতুন লাইন" = ⏎</small>
+      </div>
+      <button id="voiceStop">⏹️ থামো</button>
+    </div>
+
+    <div class="composer">
+      <button id="voiceTypeBtn" title="ভয়েস টাইপিং (Speech-to-Text)">🎙️</button>
+      <button id="voiceMsgBtn" title="ভয়েস মেসেজ রেকর্ড">🎤</button>
+      <input id="msgInput" placeholder="মেসেজ লিখুন... (🎙️ চাপলে মুখে বলে টাইপ হবে)" autocomplete="off">
+      <button id="sendBtn">➤</button>
+    </div>
+  </main>
+</div>
+
+<!-- Status modal -->
+<div id="statusModal" class="modal hidden">
+  <div class="modal-card"><h3>⭕ স্ট্যাটাস (২৪ ঘণ্টা)</h3><input id="statusText" placeholder="আপনার স্ট্যাটাস লিখুন..."><button id="statusPost">পোস্ট</button> <button id="statusClose">বন্ধ</button><div id="statusList"></div></div>
+</div>
+
+<!-- Admin modal (৩০ জন) -->
+<div id="adminModal" class="modal hidden">
+  <div class="modal-card" style="min-width:360px;max-width:96vw;max-height:90vh;overflow:auto">
+    <h3>👑 অ্যাডমিন প্যানেল — ৩০ জন ইউজার</h3>
+    <p><small id="adminCount">—</small> <button id="adminRefresh">🔄 রিফ্রেশ</button></p>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center">
+      <input id="adminEmail" type="email" placeholder="নতুন Gmail (ex@gmail.com)" style="flex:1;min-width:180px">
+      <div class="pass-wrap" style="width:140px;display:inline-flex;flex:1">
+        <input id="adminPass" type="password" placeholder="পাসওয়ার্ড (৬+)" style="width:100%">
+        <button id="toggleAdminPass" type="button" title="দেখুন/লুকান" style="width:40px">👁️</button>
+      </div>
+      <input id="adminName" type="text" placeholder="নাম (ঐচ্ছিক)" style="width:120px">
+      <button id="adminAdd">➕ যোগ করুন</button>
+    </div>
+    <p id="adminMsg" style="min-height:18px;color:#ffd60a"></p>
+    <div id="adminList" style="text-align:left;max-height:42vh;overflow:auto"></div>
+    <button id="adminClose">বন্ধ</button>
+  </div>
+</div>
+
+<!-- Call modal -->
+<div id="callModal" class="modal hidden">
+  <div class="modal-card">
+    <h3 id="callTitle">📞 কল</h3>
+    <div class="videos"><video id="localVideo" muted playsinline></video><video id="remoteVideo" playsinline autoplay></video></div>
+    <p id="callStatus">সংযোগ হচ্ছে...</p>
+    <button id="callHang">🔴 কাটো</button>
+  </div>
+</div>
+
+<script src="voice.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
