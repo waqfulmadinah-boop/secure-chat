@@ -154,7 +154,7 @@ function generateOTP() { return String(Math.floor(100000 + Math.random() * 90000
 
 // ---- Routes ----
 // 1) Login — শুধু allowlist email + সঠিক password
-app.post('/api/login', loginLimiter, (req, res) => {
+app.post('/api/login', loginLimiter, async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const password = String(req.body.password || '');
 
