@@ -2,6 +2,20 @@
 body{margin:0;background:#0b141a;color:#e9edef;transition:background .3s,color .3s}
 .hidden{display:none!important}
 
+/* Theme: Light */
+body.light{background:#e5ddd5;color:#111}
+body.light .sidebar{background:#f0f2f5}
+body.light .side-head,body.light .composer,body.light .chat-head{background:#f0f2f5}
+body.light .bubble{background:#fff;color:#111}
+body.light .bubble.me{background:#d9fdd3}
+body.light .chat-pane{background:#e5ddd5}
+body.light #search{background:#fff;color:#111}
+body.light .chat-item:hover,body.light .chat-item.active{background:#f0f2f5}
+body.light .chat-item{border-bottom-color:#e9edef}
+body.light .modal-card{background:#f0f2f5;color:#111}
+body.light .modal-card input{background:#fff;color:#111;border-color:#ccc}
+body.light .meta{color:#667781}
+
 /* Login — শিউলী ফুল */
 .login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;
   background:linear-gradient(180deg,#00000088,#0b141acc),url('https://upload.wikimedia.org/wikipedia/commons/9/9e/Nyctanthes_arbor-tristis_%28Shiuli%29.jpg') center/cover no-repeat,#0b141a}
@@ -83,24 +97,32 @@ body{margin:0;background:#0b141a;color:#e9edef;transition:background .3s,color .
 
 /* Theme: Green */
 body.green{background:#005c4b;color:#fff}
-body.green .sidebar{background:#004d40}.body.green .side-head,.body.green .composer,.body.green .chat-head{background:#00695c}
-body.green .bubble{background:#00695c}.body.green .bubble.me{background:#004d40}
+body.green .sidebar{background:#004d40}
+body.green .side-head,body.green .composer,body.green .chat-head{background:#00695c}
+body.green .bubble{background:#00695c}
+body.green .bubble.me{background:#004d40}
 body.green .chat-pane{background:#005c4b}
 
 /* Theme: Blue */
 body.blue{background:#1a237e;color:#fff}
-body.blue .sidebar{background:#0d1642}.body.blue .side-head,.body.blue .composer,.body.blue .chat-head{background:#1a237e}
-body.blue .bubble{background:#283593}.body.blue .bubble.me{background:#1a237e}
+body.blue .sidebar{background:#0d1642}
+body.blue .side-head,body.blue .composer,body.blue .chat-head{background:#1a237e}
+body.blue .bubble{background:#283593}
+body.blue .bubble.me{background:#1a237e}
 
 /* Theme: Pink */
 body.pink{background:#880e4f;color:#fff}
-body.pink .sidebar{background:#4a0028}.body.pink .side-head,.body.pink .composer,.body.pink .chat-head{background:#880e4f}
-body.pink .bubble{background:#ad1457}.body.pink .bubble.me{background:#880e4f}
+body.pink .sidebar{background:#4a0028}
+body.pink .side-head,body.pink .composer,body.pink .chat-head{background:#880e4f}
+body.pink .bubble{background:#ad1457}
+body.pink .bubble.me{background:#880e4f}
 
 /* Theme: Purple */
 body.purple{background:#4a148c;color:#fff}
-body.purple .sidebar{background:#311b92}.body.purple .side-head,.body.purple .composer,.body.purple .chat-head{background:#4a148c}
-body.purple .bubble{background:#6a1b9a}.body.purple .bubble.me{background:#4a148c}
+body.purple .sidebar{background:#311b92}
+body.purple .side-head,body.purple .composer,body.purple .chat-head{background:#4a148c}
+body.purple .bubble{background:#6a1b9a}
+body.purple .bubble.me{background:#4a148c}
 
 /* Media preview in composer */
 .media-preview-bar{display:flex;gap:6px;padding:4px 10px;background:#202c33;position:relative;z-index:1}

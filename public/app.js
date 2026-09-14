@@ -1,6 +1,6 @@
 // ===== Secure Chat Frontend =====
 const $ = (id) => document.getElementById(id);
-let token = localStorage.getItem('sc_token') || '';
+let token = '';  // ← no auto-login: always show login screen
 let me = null, socket = null, users = [], currentPeer = 'group';
 let replyTo = null, statuses = JSON.parse(localStorage.getItem('sc_status') || '[]');
 let pendingMedia = []; // for image/video upload
@@ -58,17 +58,6 @@ $('otpVerify').onclick = async () => {
   } catch (e) { $('loginError').textContent = '⛔ ' + e.message; }
 };
 $('otpInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('otpVerify').click(); });
-
-// Auto-login with saved token
-(async () => {
-  if (!token) return;
-  try {
-    const m = await api('/api/me');
-    me = m;
-    if (m.allowedUsers) users = m.allowedUsers;
-    enterApp(true);
-  } catch { token = ''; localStorage.removeItem('sc_token'); }
-})();
 
 const ADMIN_EMAIL = 'waqfulmadinah@gmail.com';
 async function enterApp() {

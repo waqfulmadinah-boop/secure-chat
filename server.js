@@ -79,7 +79,14 @@ const app = express();
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+// No-cache for JS/CSS so users always get latest
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, path) => {
+    if (path.endsWith('.js') || path.endsWith('.css')) {
+      res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+    }
+  }
+}));
 
 const loginLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 30, message: { error: 'অনেকবার চেষ্টা করেছেন। ১০ মিনিট পর আবার চেষ্টা করুন।' } });
 
