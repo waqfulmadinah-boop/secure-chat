@@ -152,16 +152,22 @@ app.post('/api/verify-otp', loginLimiter, (req, res) => {
 // 2) প্রোফাইল — নিজের তথ্য দেখা
 app.get('/api/me', authMiddleware, (req, res) => {
   const u = users[req.email] || {};
-  res.json({ email: req.email, name: u.displayName || u.name || req.email.split('@')[0], displayName: u.displayName || u.name, avatar: u.avatar || null, registered: u.registered, regCode: u.regCode });
+  res.json({ email: req.email, name: u.displayName || u.name || req.email.split('@')[0], displayName: u.displayName || u.name, avatar: u.avatar || null, registered: u.registered, regCode: u.regCode,
+    allowedUsers: ALLOWED_EMAILS.map(e => ({ email: e, name: (users[e] || {}).displayName || (users[e] || {}).name || e.split('@')[0], avatar: (users[e] || {}).avatar || null, online: onlineMap.has(e) }))
+  });
 });
 
 // 2b) প্রোফাইল আপডেট (নাম, ছবি, পাসওয়ার্ড)
 app.post('/api/profile/update', authMiddleware, (req, res) => {
   const u = users[req.email]; if (!u) return res.status(404).json({ error: 'Not found' });
   if (req.body.displayName) u.displayName = String(req.body.displayName).trim().slice(0, 30);
-  if (req.body.avatar) u.avatar = req.body.avatar; // base64 dataUrl
+  if (req.body.avatar !== undefined) {
+    u.avatar = req.body.avatar || null; // empty string → remove avatar
+  }
   if (req.body.newPassword) {
-    if (req.body.newPassword.length < 6) return res.status(400).json({ error: 'পাসওয়ার্ড ৬+ অক্ষর হতে হবে।' });
+    if (!req.body.oldPassword) return res.status(400).json({ error: 'পুরনো পাসওয়ার্ড দিন।' });
+    if (!bcrypt.compareSync(String(req.body.oldPassword), u.hash)) return res.status(401).json({ error: 'পুরনো পাসওয়ার্ড ভুল।' });
+    if (req.body.newPassword.length < 6) return res.status(400).json({ error: 'নতুন পাসওয়ার্ড ৬+ অক্ষর হতে হবে।' });
     u.hash = bcrypt.hashSync(req.body.newPassword, 10);
   }
   saveUsers(users);

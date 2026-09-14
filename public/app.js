@@ -40,7 +40,7 @@ async function doLogin() {
       return;
     }
     token = j.token; localStorage.setItem('sc_token', token);
-    me = { email: j.email, name: j.name }; users = j.allowedUsers || [];
+    me = { email: j.email, name: j.displayName || j.name, displayName: j.displayName || j.name, avatar: j.avatar }; users = j.allowedUsers || [];
     enterApp();
   } catch (e) { $('loginError').textContent = '⛔ ' + e.message; }
   $('loginBtn').textContent = 'প্রবেশ করুন';
@@ -52,20 +52,21 @@ $('otpVerify').onclick = async () => {
   try {
     const j = await api('/api/verify-otp', { method: 'POST', body: JSON.stringify({ email: loginEmail, otp }) });
     token = j.token; localStorage.setItem('sc_token', token);
-    me = { email: j.email, name: j.name }; users = j.allowedUsers || [];
+    me = { email: j.email, name: j.displayName || j.name, displayName: j.displayName || j.name, avatar: j.avatar }; users = j.allowedUsers || [];
     $('otpSection').classList.add('hidden');
     enterApp();
   } catch (e) { $('loginError').textContent = '⛔ ' + e.message; }
 };
 $('otpInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('otpVerify').click(); });
-if (token) api('/api/me').then(m => { me = m; return api('/api/login', { method: 'POST', body: JSON.stringify({ email: m.email, password: '__token__' }) }).catch(() => m); }).catch(() => { token = ''; localStorage.removeItem('sc_token'); });
 
-// auto-login with saved token info
+// Auto-login with saved token
 (async () => {
   if (!token) return;
   try {
     const m = await api('/api/me');
-    me = m; enterApp(true);
+    me = m;
+    if (m.allowedUsers) users = m.allowedUsers;
+    enterApp(true);
   } catch { token = ''; localStorage.removeItem('sc_token'); }
 })();
 
@@ -137,7 +138,7 @@ async function refreshAdminList() {
   $('adminCount').textContent = `${d.count} / ${d.max} জন`;
   $('adminList').innerHTML = d.users.map(u => `
     <div style="display:flex;justify-content:space-between;align-items:center;padding:6px;border-bottom:1px solid #222d34">
-      <span>${u.online?'🟢':'⚪'} <b>${escapeHtml(u.name)}</b> <small>${escapeHtml(u.email)}</small></span>
+      <span>${u.online?'🟢':'⚪'} <b>${escapeHtml(u.name)}</b> <small>${escapeHtml(u.email)}</small><br><small style="color:#8696a0">🔑 ${u.regCode || 'N/A'}</small></span>
       <span>
         <button onclick="resetPass('${u.email}')" title="পাসওয়ার্ড রিসেট">🔑</button>
         ${u.email===ADMIN_EMAIL?'👑':'<button onclick="removeUser(\''+u.email+'\')" title="সরাও">🗑️</button>'}
@@ -153,8 +154,10 @@ function guessPeers() {
 function switchPeer(p) {
   currentPeer = p; replyTo = null; $('replyBar').classList.add('hidden');
   document.querySelectorAll('.chat-item').forEach(x => x.classList.remove('active'));
-  $('peerName').textContent = p === 'group' ? 'গ্রুপ চ্যাট' : p;
-  $('peerAvatar').textContent = (p === 'group' ? 'G' : p[0]).toUpperCase();
+  const peerInfo = (adminCache?.users || []).find(u => u.email === p) || {};
+  $('peerName').textContent = p === 'group' ? 'গ্রুপ চ্যাট' : (peerInfo.name || p.split('@')[0]);
+  if (peerInfo.avatar) { $('peerAvatar').innerHTML = `<img src="${peerInfo.avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`; }
+  else { $('peerAvatar').textContent = (p === 'group' ? 'G' : (peerInfo.name || p)[0]).toUpperCase(); }
   $('messages').innerHTML = '';
   api('/api/messages').then(ms => ms.filter(m => p === 'group' ? m.to === 'group' : (m.from === p && m.to === me.email) || (m.from === me.email && m.to === p)).forEach(addMsg));
   renderChatList();
@@ -232,7 +235,7 @@ $('search').oninput = (e) => {
   document.querySelectorAll('.bubble').forEach(b => b.style.outline = q && b.textContent.toLowerCase().includes(q) ? '2px solid #ffd60a' : '');
 };
 // theme
-$('themeBtn').onclick = () => document.body.classList.toggle('light');
+$('themeBtn').onclick = () => $('settingsModal').classList.remove('hidden');
 // logout
 function logout() { token = ''; localStorage.removeItem('sc_token'); location.reload(); }
 $('logoutBtn').onclick = logout;
@@ -389,19 +392,21 @@ $('profileAvatarInput').onchange = (e) => {
   rd.onload = () => { pendingAvatar = rd.result; $('profileAvatarPreview').innerHTML = `<img src="${pendingAvatar}" style="width:100%;height:100%;object-fit:cover">`; };
   rd.readAsDataURL(file);
 };
-$('removeAvatarBtn').onclick = () => { pendingAvatar = ''; $('profileAvatarPreview').textContent = (me.displayName || 'U')[0].toUpperCase(); };
+$('removeAvatarBtn').onclick = () => { pendingAvatar = null; avatarRemoved = true; me.avatar = null; $('profileAvatarPreview').textContent = (me.displayName || 'U')[0].toUpperCase(); };
 // Save profile
+let avatarRemoved = false;
 $('saveProfile').onclick = async () => {
   $('profileMsg').textContent = 'সেভ হচ্ছে...';
   try {
     const body = { displayName: $('profileNameInput').value.trim() };
-    if (pendingAvatar !== null) body.avatar = pendingAvatar;
+    if (avatarRemoved) body.avatar = '';
+    else if (pendingAvatar) body.avatar = pendingAvatar;
     const j = await api('/api/profile/update', { method: 'POST', body: JSON.stringify(body) });
     me.displayName = j.displayName; me.avatar = j.avatar;
     if (j.avatar) { $('meAvatar').innerHTML = `<img src="${j.avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`; }
     else { $('meAvatar').textContent = (j.displayName || 'U')[0].toUpperCase(); }
     $('meName').textContent = j.displayName;
-    pendingAvatar = null;
+    pendingAvatar = null; avatarRemoved = false;
     $('profileMsg').textContent = '✅ প্রোফাইল সেভ হয়েছে';
     renderChatList();
   } catch (e) { $('profileMsg').textContent = '⛔ ' + e.message; }
