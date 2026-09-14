@@ -223,8 +223,6 @@ $('search').oninput = (e) => {
   const q = e.target.value.toLowerCase();
   document.querySelectorAll('.bubble').forEach(b => b.style.outline = q && b.textContent.toLowerCase().includes(q) ? '2px solid #ffd60a' : '');
 };
-// theme
-$('themeBtn').onclick = () => $('settingsModal').classList.remove('hidden');
 // logout
 function logout() { token = ''; localStorage.removeItem('sc_token'); location.reload(); }
 $('logoutBtn').onclick = logout;
