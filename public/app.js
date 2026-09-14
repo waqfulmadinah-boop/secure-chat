@@ -3,6 +3,7 @@ const $ = (id) => document.getElementById(id);
 let token = localStorage.getItem('sc_token') || '';
 let me = null, socket = null, users = [], currentPeer = 'group';
 let replyTo = null, statuses = JSON.parse(localStorage.getItem('sc_status') || '[]');
+let pendingMedia = []; // for image/video upload
 
 async function api(path, opts = {}) {
   const r = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(opts.headers || {}) } });
@@ -21,6 +22,7 @@ bindToggle('togglePass','password');
 bindToggle('toggleAdminPass','adminPass');
 
 // ---- Login ----
+let loginEmail = '';
 $('loginBtn').onclick = doLogin;
 $('password').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
 async function doLogin() {
@@ -30,12 +32,32 @@ async function doLogin() {
   $('loginBtn').textContent = 'যাচাই হচ্ছে...';
   try {
     const j = await api('/api/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+    if (j.require2FA) {
+      loginEmail = email;
+      $('otpSection').classList.remove('hidden');
+      $('loginError').textContent = '📱 OTP আপনার কনসোল/সার্ভার লগে দেখুন।';
+      $('loginBtn').textContent = 'প্রবেশ করুন';
+      return;
+    }
     token = j.token; localStorage.setItem('sc_token', token);
     me = { email: j.email, name: j.name }; users = j.allowedUsers || [];
     enterApp();
   } catch (e) { $('loginError').textContent = '⛔ ' + e.message; }
   $('loginBtn').textContent = 'প্রবেশ করুন';
 }
+// 2FA OTP verify
+$('otpVerify').onclick = async () => {
+  const otp = $('otpInput').value.trim();
+  if (!otp || otp.length !== 6) { $('loginError').textContent = '৬ ডিজিট OTP দিন।'; return; }
+  try {
+    const j = await api('/api/verify-otp', { method: 'POST', body: JSON.stringify({ email: loginEmail, otp }) });
+    token = j.token; localStorage.setItem('sc_token', token);
+    me = { email: j.email, name: j.name }; users = j.allowedUsers || [];
+    $('otpSection').classList.add('hidden');
+    enterApp();
+  } catch (e) { $('loginError').textContent = '⛔ ' + e.message; }
+};
+$('otpInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('otpVerify').click(); });
 if (token) api('/api/me').then(m => { me = m; return api('/api/login', { method: 'POST', body: JSON.stringify({ email: m.email, password: '__token__' }) }).catch(() => m); }).catch(() => { token = ''; localStorage.removeItem('sc_token'); });
 
 // auto-login with saved token info
@@ -144,17 +166,26 @@ function addMsg(m) {
   const time = new Date(m.at).toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' });
   let inner = '';
   if (m.replyTo) inner += `<div class="reply">↩️ ${escapeHtml(m.replyTo)}</div>`;
-  if (m.type === 'voice' && m.voice) inner += `🎤 <audio controls src="${m.voice.dataUrl}"></audio> <small>(${m.voice.duration}s)</small>`;
-  else inner += escapeHtml(m.text);
+  // Media display
+  if (m.media) {
+    const mt = m.media.mimeType || '';
+    if (mt.startsWith('image/')) inner += `<img class="media-preview" src="${m.media.dataUrl}" onclick="window.open('${m.media.dataUrl}','_blank')">`;
+    else if (mt.startsWith('video/')) inner += `<video class="media-preview" controls src="${m.media.dataUrl}"></video>`;
+    else if (mt.startsWith('audio/')) inner += `<audio controls src="${m.media.dataUrl}"></audio>`;
+    else inner += `📄 <a href="${m.media.dataUrl}" download="${m.media.fileName || 'file'}" style="color:#53bdeb">${escapeHtml(m.media.fileName || 'ফাইল')}</a>`;
+    if (m.text && m.text !== m.media.fileName) inner += `<div>${escapeHtml(m.text)}</div>`;
+  } else if (m.type === 'voice' && m.voice) {
+    inner += `🎤 <audio controls src="${m.voice.dataUrl}"></audio> <small>(${m.voice.duration}s)</small>`;
+  } else {
+    inner += escapeHtml(m.text);
+  }
   inner += `<div class="meta">${mine ? '' : escapeHtml(m.from.split('@')[0]) + ' • '}${time} ${mine ? '<span class="tick">✓✓</span>' : ''}</div>`;
   div.innerHTML = inner;
-  // reply on double click, reaction on right click
-  div.ondblclick = () => { replyTo = m.text || 'ভয়েস মেসেজ'; $('replyText').textContent = replyTo.slice(0, 60); $('replyBar').classList.remove('hidden'); };
+  div.ondblclick = () => { replyTo = m.text || 'মেসেজ'; $('replyText').textContent = replyTo.slice(0, 60); $('replyBar').classList.remove('hidden'); };
   div.oncontextmenu = (e) => { e.preventDefault(); const r = prompt('রিয়্যাকশন দিন (❤️ 👍 😂 😮 😢):', '❤️'); if (r) div.innerHTML += ' ' + r; };
   $('messages').appendChild(div);
   $('messages').scrollTop = 99999;
   if (!mine) socket?.emit('chat:read', { id: m.id });
-  // disappearing countdown delete
   if (m.expiresAt) setTimeout(() => div.remove(), m.expiresAt - Date.now());
 }
 function escapeHtml(s) { return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
@@ -275,3 +306,86 @@ function endCallUI() {
   try { pc?.close(); localStream?.getTracks().forEach(t => t.stop()); } catch {}
   pc = null; callPeer = null;
 }
+
+// ---- Media Upload (ছবি/ভিডিও/ফাইল) ----
+$('mediaInput').onchange = async (e) => {
+  for (const file of e.target.files) {
+    const rd = new FileReader();
+    rd.onload = () => {
+      pendingMedia.push({ dataUrl: rd.result, mimeType: file.type, fileName: file.name });
+      showMediaPreview();
+    };
+    rd.readAsDataURL(file);
+  }
+  e.target.value = '';
+};
+function showMediaPreview() {
+  const existing = document.querySelector('.media-preview-bar');
+  if (existing) existing.remove();
+  if (!pendingMedia.length) return;
+  const bar = document.createElement('div');
+  bar.className = 'media-preview-bar';
+  pendingMedia.forEach((m, i) => {
+    const el = document.createElement('div');
+    if (m.mimeType.startsWith('image/')) el.innerHTML = `<img src="${m.dataUrl}">`;
+    else if (m.mimeType.startsWith('video/')) el.innerHTML = `<video src="${m.dataUrl}" style="max-height:60px"></video>`;
+    else el.innerHTML = `<small>📄 ${escapeHtml(m.fileName)}</small>`;
+    const rm = document.createElement('button');
+    rm.className = 'remove-media'; rm.textContent = '✕';
+    rm.onclick = () => { pendingMedia.splice(i, 1); showMediaPreview(); };
+    el.appendChild(rm); bar.appendChild(el);
+  });
+  $('messages').before(bar);
+}
+// Override send to include media
+const origSend = send;
+send = function() {
+  let t = $('msgInput').value.trim();
+  if (!t && !pendingMedia.length) return;
+  if (/[\u0980-\u09FF]$/.test(t) && !/[।?!]$/.test(t)) t += '।';
+  for (const m of pendingMedia) {
+    socket.emit('chat:message', { to: currentPeer, text: t || m.fileName, media: m, replyTo, disappearSec: Number($('disappear').value) || null });
+  }
+  if (!pendingMedia.length) socket.emit('chat:message', { to: currentPeer, text: t, replyTo, disappearSec: Number($('disappear').value) || null });
+  $('msgInput').value = ''; pendingMedia = []; replyTo = null;
+  const bar = document.querySelector('.media-preview-bar'); if (bar) bar.remove();
+  $('replyBar').classList.add('hidden');
+};
+
+// ---- Settings (2FA + Theme) ----
+$('settingsBtn').onclick = async () => {
+  $('settingsModal').classList.remove('hidden');
+  try {
+    const j = await api('/api/me');
+    // check 2FA status from last login
+    $('twofaStatus').textContent = 'বর্তমান স্ট্যাটাস: ' + (me.twofaEnabled ? '✅ চালু' : '❌ বন্ধ');
+  } catch {}
+};
+$('settingsClose').onclick = () => $('settingsModal').classList.add('hidden');
+$('toggle2FA').onclick = async () => {
+  try {
+    const j = await api('/api/2fa/enable', { method: 'POST', body: '{}' });
+    $('twofaStatus').textContent = '✅ 2FA চালু হয়েছে। OTP: ' + j.message.split('OTP: ')[1];
+    me.twofaEnabled = true;
+  } catch (e) {
+    try {
+      await api('/api/2fa/disable', { method: 'POST', body: '{}' });
+      $('twofaStatus').textContent = '❌ 2FA বন্ধ হয়েছে।';
+      me.twofaEnabled = false;
+    } catch (e2) { alert(e2.message); }
+  }
+};
+
+// ---- Theme ----
+const savedTheme = localStorage.getItem('sc_theme') || 'dark';
+document.body.className = savedTheme;
+document.querySelectorAll('.theme-opt').forEach(b => {
+  if (b.dataset.theme === savedTheme) b.classList.add('active');
+  else b.classList.remove('active');
+  b.onclick = () => {
+    document.body.className = b.dataset.theme;
+    localStorage.setItem('sc_theme', b.dataset.theme);
+    document.querySelectorAll('.theme-opt').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+  };
+});

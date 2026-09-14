@@ -20,6 +20,11 @@
       <button id="togglePass" type="button" title="দেখুন/লুকান">👁️</button>
     </div>
     <button id="loginBtn">প্রবেশ করুন</button>
+    <div id="otpSection" class="hidden">
+      <p style="color:#ffd60a">📱 2FA OTP দিন (6 ডিজিট)</p>
+      <input id="otpInput" type="text" maxlength="6" placeholder="000000" inputmode="numeric">
+      <button id="otpVerify">যাচাই করুন</button>
+    </div>
     <p id="loginError" class="error"></p>
     <p class="hint">⚠️ বাইরের কেউ লগইন করতে পারবে না — শুধু অ্যাডমিন অনুমোদিত Gmail। Chrome / Edge ভয়েস টাইপিং-এর জন্য সেরা।</p>
   </div>
@@ -32,7 +37,7 @@
       <div class="me"><span id="meAvatar" class="avatar">A</span><div><b id="meName">—</b><small id="meEmail">—</small></div></div>
       <div class="side-actions">
         <button id="adminBtn" title="অ্যাডমিন (৩০ জন ম্যানেজ)" class="hidden">👑</button>
-        <button id="themeBtn" title="ডার্ক/লাইট">🌙</button>
+        <button id="settingsBtn" title="সেটিংস (2FA, থিম)">⚙️</button>
         <button id="statusBtn" title="স্ট্যাটাস">⭕</button>
         <button id="logoutBtn" title="লগআউট">⏻</button>
       </div>
@@ -83,12 +88,37 @@
     </div>
 
     <div class="composer">
+      <label id="mediaBtn" class="compose-btn" title="ছবি/ভিডিও/ফাইল পাঠান">📎</label>
+      <input id="mediaInput" type="file" accept="image/*,video/*,audio/*,.pdf,.doc,.docx" class="hidden" multiple>
       <button id="voiceTypeBtn" title="ভয়েস টাইপিং (Speech-to-Text)">🎙️</button>
       <button id="voiceMsgBtn" title="ভয়েস মেসেজ রেকর্ড">🎤</button>
       <input id="msgInput" placeholder="মেসেজ লিখুন... (🎙️ চাপলে মুখে বলে টাইপ হবে)" autocomplete="off">
       <button id="sendBtn">➤</button>
     </div>
   </main>
+</div>
+
+<!-- Settings modal (2FA + Theme) -->
+<div id="settingsModal" class="modal hidden">
+  <div class="modal-card" style="min-width:380px">
+    <h3>⚙️ সেটিংস</h3>
+    <div style="text-align:left">
+      <h4>🔐 দুই-ধাপে প্রমাণীকরণ (2FA)</h4>
+      <p id="twofaStatus">—</p>
+      <button id="toggle2FA">2FA চালু/বন্ধ করুন</button>
+      <hr style="border-color:#2a3942;margin:12px 0">
+      <h4>🎨 থিম বদলান</h4>
+      <div class="theme-grid" id="themeGrid">
+        <button data-theme="dark" class="theme-opt active" style="background:#0b141a;color:#fff">ডার্ক</button>
+        <button data-theme="light" class="theme-opt" style="background:#e5ddd5;color:#111">লাইট</button>
+        <button data-theme="green" class="theme-opt" style="background:#005c4b;color:#fff">সবুজ</button>
+        <button data-theme="blue" class="theme-opt" style="background:#1a237e;color:#fff">নীল</button>
+        <button data-theme="pink" class="theme-opt" style="background:#880e4f;color:#fff">গোলাপি</button>
+        <button data-theme="purple" class="theme-opt" style="background:#4a148c;color:#fff">বেগুনি</button>
+      </div>
+    </div>
+    <button id="settingsClose">বন্ধ</button>
+  </div>
 </div>
 
 <!-- Status modal -->

@@ -75,7 +75,7 @@ let users = loadUsers();
 const app = express();
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors());
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '15mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 const loginLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 30, message: { error: 'অনেকবার চেষ্টা করেছেন। ১০ মিনিট পর আবার চেষ্টা করুন।' } });
@@ -102,6 +102,10 @@ function authMiddleware(req, res, next) {
   }
 }
 
+// ---- 2FA OTP Store ----
+const otpStore = new Map(); // email -> {otp, expiresAt}
+function generateOTP() { return String(Math.floor(100000 + Math.random() * 900000)); }
+
 // ---- Routes ----
 // 1) Login — শুধু allowlist email + সঠিক password
 app.post('/api/login', loginLimiter, (req, res) => {
@@ -117,8 +121,43 @@ app.post('/api/login', loginLimiter, (req, res) => {
   if (!u) return res.status(403).json({ error: 'এই অ্যাকাউন্ট এখনো সক্রিয় করা হয়নি। Admin-এর সাথে যোগাযোগ করুন।' });
   if (!bcrypt.compareSync(password, u.hash)) return res.status(401).json({ error: 'ভুল পাসওয়ার্ড।' });
 
+  // 2FA check
+  if (u.twoFactorEnabled) {
+    const otp = generateOTP();
+    otpStore.set(email, { otp, expiresAt: Date.now() + 5 * 60 * 1000 });
+    console.log(`[2FA] OTP for ${email}: ${otp}`);
+    return res.json({ require2FA: true, email, hint: `OTP আপনার কনসোলে: ${otp}` });
+  }
+
   const token = signToken(email);
   res.json({ token, email, name: u.name, allowedUsers: ALLOWED_EMAILS.map(e => ({ email: e, name: (users[e] || {}).name || e.split('@')[0], online: onlineMap.has(e) })) });
+});
+
+// 1b) 2FA verify
+app.post('/api/verify-otp', loginLimiter, (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const otp = String(req.body.otp || '');
+  const stored = otpStore.get(email);
+  if (!stored || stored.expiresAt < Date.now()) return res.status(400).json({ error: 'OTP মেয়াদ শেষ হয়েছে। আবার লগইন করুন।' });
+  if (stored.otp !== otp) return res.status(401).json({ error: 'ভুল OTP।' });
+  otpStore.delete(email);
+  const u = users[email] || {};
+  const token = signToken(email);
+  res.json({ token, email, name: u.name, allowedUsers: ALLOWED_EMAILS.map(e => ({ email: e, name: (users[e] || {}).name || e.split('@')[0], online: onlineMap.has(e) })) });
+});
+
+// 1c) 2FA enable/disable
+app.post('/api/2fa/enable', authMiddleware, (req, res) => {
+  const u = users[req.email]; if (!u) return res.status(404).json({ error: 'Not found' });
+  u.twoFactorEnabled = true; saveUsers(users);
+  const otp = generateOTP(); otpStore.set(req.email, { otp, expiresAt: Date.now() + 5 * 60 * 1000 });
+  console.log(`[2FA] Test OTP for ${req.email}: ${otp}`);
+  res.json({ ok: true, message: '2FA সক্রিয় হয়েছে। OTP: ' + otp });
+});
+app.post('/api/2fa/disable', authMiddleware, (req, res) => {
+  const u = users[req.email]; if (!u) return res.status(404).json({ error: 'Not found' });
+  u.twoFactorEnabled = false; saveUsers(users);
+  res.json({ ok: true, message: '2FA নিষ্ক্রিয় হয়েছে।' });
 });
 
 // 2) নিজের তথ্য
@@ -199,7 +238,7 @@ app.get('/api/messages', authMiddleware, (req, res) => {
 
 // ---- Socket.io (realtime + call signaling) ----
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
+const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 10e6 }); // 10MB for media
 const onlineMap = new Map(); // email -> socketId
 
 io.use((socket, next) => {
@@ -221,13 +260,14 @@ io.on('connection', (socket) => {
   // পুরনো মেসেজে টিক আপডেট জানানো
   socket.on('chat:message', (data = {}) => {
     const text = String(data.text || '').slice(0, 2000);
-    if (!text.trim() && !data.voice) return;
+    if (!text.trim() && !data.voice && !data.media) return;
     const msg = {
       id: 'm' + Date.now() + Math.floor(Math.random() * 9999),
       from: email,
-      to: data.to || 'group',           // 'group' অথবা নির্দিষ্ট email
-      text, type: data.voice ? 'voice' : 'text',
-      voice: data.voice || null,         // {dataUrl, duration}
+      to: data.to || 'group',
+      text, type: data.media ? (data.media.mimeType || 'image').split('/')[0] : data.voice ? 'voice' : 'text',
+      voice: data.voice || null,
+      media: data.media || null,         // {dataUrl, mimeType, fileName}
       replyTo: data.replyTo || null,
       at: Date.now(),
       expiresAt: data.disappearSec ? Date.now() + data.disappearSec * 1000 : null
