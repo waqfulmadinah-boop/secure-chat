@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Madani IT — প্রাইভেট চ্যাট</title>
-<link rel="stylesheet" href="styles.css?v=5">
+<link rel="stylesheet" href="styles.css?v=6">
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#00a884">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -15,7 +15,7 @@
 <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
-<!-- ===== Login Screen (Allowlist Gmail + Password) ===== -->
+<!-- ===== Login Screen ===== -->
 <div id="loginScreen" class="login-wrap">
   <div class="login-card">
     <div class="logo">🔒</div>
@@ -28,12 +28,31 @@
     </div>
     <button id="loginBtn">প্রবেশ করুন</button>
     <div id="otpSection" class="hidden">
-      <p style="color:#ffd60a">📱 2FA OTP দিন (6 ডিজিট)</p>
+      <p style="color:#ffd60a">📱 2FA OTP দিন (৬ ডিজিট)</p>
       <input id="otpInput" type="text" maxlength="6" placeholder="000000" inputmode="numeric">
       <button id="otpVerify">যাচাই করুন</button>
     </div>
     <p id="loginError" class="error"></p>
-    <p class="hint">⚠️ বাইরের কেউ লগইন করতে পারবে না — শুধু অ্যাডমিন অনুমোদিত Gmail। Chrome / Edge ভয়েস টাইপিং-এর জন্য সেরা।</p>
+    <p class="hint">অ্যাডমিন অনুমোদিত Gmail দিয়ে লগইন করুন। অথবা নিচে রেজিস্ট্রেশন করুন।</p>
+    <p style="margin-top:12px"><a href="#" id="showRegister" style="color:#00a884;text-decoration:underline;cursor:pointer">নতুন? রেজিস্ট্রেশন করুন →</a></p>
+  </div>
+</div>
+
+<!-- ===== Registration Screen ===== -->
+<div id="registerScreen" class="login-wrap hidden">
+  <div class="login-card">
+    <div class="logo">📝</div>
+    <h1>রেজিস্ট্রেশন</h1>
+    <p class="sub">Madrasatul Madinah</p>
+    <input id="regName" type="text" placeholder="আপনার নাম (ঐচ্ছিক)">
+    <input id="regEmail" type="email" placeholder="আপনার Gmail (example@gmail.com)" autocomplete="username">
+    <div class="pass-wrap">
+      <input id="regPassword" type="password" placeholder="পাসওয়ার্ড (৬+ অক্ষর)" autocomplete="new-password">
+      <button id="toggleRegPass" type="button" title="দেখুন/লুকান">👁️</button>
+    </div>
+    <button id="registerBtn">রেজিস্ট্রেশন করুন</button>
+    <p id="regError" class="error"></p>
+    <p style="margin-top:12px"><a href="#" id="showLogin" style="color:#00a884;text-decoration:underline;cursor:pointer">← লগইনে ফিরে যান</a></p>
   </div>
 </div>
 
@@ -43,15 +62,15 @@
     <div class="side-head">
       <div class="me"><span id="meAvatar" class="avatar">A</span><div><b id="meName">—</b><small id="meEmail">—</small></div></div>
       <div class="side-actions">
-        <button id="adminBtn" title="অ্যাডমিন (৩০ জন ম্যানেজ)" class="hidden">👑</button>
-        <button id="settingsBtn" title="সেটিংস (2FA, থিম)">⚙️</button>
+        <button id="adminBtn" title="অ্যাডমিন" class="hidden">👑</button>
+        <button id="settingsBtn" title="সেটিংস">⚙️</button>
         <button id="statusBtn" title="স্ট্যাটাস">⭕</button>
         <button id="logoutBtn" title="লগআউট">⏻</button>
       </div>
     </div>
-    <input id="search" placeholder="🔍 সার্চ (মেসেজ / নাম)...">
+    <input id="search" placeholder="🔍 সার্চ...">
     <div id="chatList" class="chat-list"></div>
-    <div class="side-foot"><small>🔐 End-to-End ধারণা • Disappearing • Voice</small></div>
+    <div class="side-foot"><small>🔐 Secure • Disappearing • Voice</small></div>
   </aside>
 
   <main class="chat-pane">
@@ -61,10 +80,11 @@
       <div class="chat-tools">
         <select id="disappear" title="Disappearing message">
           <option value="">⏱️ Off</option>
-          <option value="60">⏱️ 1 মিনিট</option>
-          <option value="3600">⏱️ 1 ঘণ্টা</option>
-          <option value="86400">⏱️ 24 ঘণ্টা</option>
+          <option value="60">⏱️ ১ মিনিট</option>
+          <option value="3600">⏱️ ১ ঘণ্টা</option>
+          <option value="86400">⏱️ ২৪ ঘণ্টা</option>
         </select>
+        <button id="groupCallBtn" title="গ্রুপ কল (ভিডিও)">👥📞</button>
         <button id="voiceCallBtn" title="ভয়েস কল">📞</button>
         <button id="videoCallBtn" title="ভিডিও কল">🎥</button>
       </div>
@@ -89,7 +109,7 @@
         <label><input type="checkbox" id="autoSend"> "পাঠাও" বললে অটো-সেন্ড</label>
         <label><input type="checkbox" id="autoPunct" checked> অটো-দাঁড়ি/প্রশ্নবোধক</label></small>
         <div id="voiceInterim" class="interim"></div>
-        <small class="cmd-hint">কমান্ড: "পাঠাও" = সেন্ড • "মুছে ফেলো" = ক্লিয়ার • "নতুন লাইন" = ⏎</small>
+        <small class="cmd-hint">কমান্ড: "পাঠাও" = সেন্ড • "মুছে ফেলো" = ক্লিয়ার</small>
       </div>
       <button id="voiceStop">⏹️ থামো</button>
     </div>
@@ -97,15 +117,15 @@
     <div class="composer">
       <label id="mediaBtn" for="mediaInput" class="compose-btn" title="ছবি/ভিডিও/ফাইল পাঠান">📎</label>
       <input id="mediaInput" type="file" accept="image/*,video/*,audio/*,.pdf,.doc,.docx" class="hidden" multiple>
-      <button id="voiceTypeBtn" title="ভয়েস টাইপিং (Speech-to-Text)">🎙️</button>
+      <button id="voiceTypeBtn" title="ভয়েস টাইপিং">🎙️</button>
       <button id="voiceMsgBtn" title="ভয়েস মেসেজ রেকর্ড">🎤</button>
-      <input id="msgInput" placeholder="মেসেজ লিখুন... (🎙️ চাপলে মুখে বলে টাইপ হবে)" autocomplete="off">
+      <input id="msgInput" placeholder="মেসেজ লিখুন..." autocomplete="off">
       <button id="sendBtn">➤</button>
     </div>
   </main>
 </div>
 
-<!-- Settings modal (Profile + 2FA + Theme) -->
+<!-- Settings modal -->
 <div id="settingsModal" class="modal hidden">
   <div class="modal-card" style="min-width:380px;max-height:90vh;overflow:auto">
     <h3>⚙️ সেটিংস</h3>
@@ -129,11 +149,11 @@
       <button id="changePassBtn" style="width:100%">🔑 পাসওয়ার্ড বদলান</button>
       <p id="passMsg" style="min-height:16px;color:#ffd60a"></p>
       <hr style="border-color:#2a3942;margin:12px 0">
-      <h4>🔐 দুই-ধাপে প্রমাণীকরণ (2FA)</h4>
+      <h4>🔐 2FA</h4>
       <p id="twofaStatus">—</p>
-      <button id="toggle2FA">2FA চালু/বন্ধ করুন</button>
+      <button id="toggle2FA">2FA চালু/বন্ধ</button>
       <hr style="border-color:#2a3942;margin:12px 0">
-      <h4>🎨 থিম বদলান</h4>
+      <h4>🎨 থিম</h4>
       <div class="theme-grid" id="themeGrid">
         <button data-theme="dark" class="theme-opt active" style="background:#0b141a;color:#fff">ডার্ক</button>
         <button data-theme="light" class="theme-opt" style="background:#e5ddd5;color:#111">লাইট</button>
@@ -149,22 +169,22 @@
 
 <!-- Status modal -->
 <div id="statusModal" class="modal hidden">
-  <div class="modal-card"><h3>⭕ স্ট্যাটাস (২৪ ঘণ্টা)</h3><input id="statusText" placeholder="আপনার স্ট্যাটাস লিখুন..."><button id="statusPost">পোস্ট</button> <button id="statusClose">বন্ধ</button><div id="statusList"></div></div>
+  <div class="modal-card"><h3>⭕ স্ট্যাটাস (২৪ ঘণ্টা)</h3><input id="statusText" placeholder="স্ট্যাটাস লিখুন..."><button id="statusPost">পোস্ট</button> <button id="statusClose">বন্ধ</button><div id="statusList"></div></div>
 </div>
 
-<!-- Admin modal (৩০ জন) -->
+<!-- Admin modal -->
 <div id="adminModal" class="modal hidden">
   <div class="modal-card" style="min-width:360px;max-width:96vw;max-height:90vh;overflow:auto">
-    <h3>👑 অ্যাডমিন প্যানেল — ৩০ জন ইউজার</h3>
+    <h3>👑 অ্যাডমিন প্যানেল</h3>
     <p><small id="adminCount">—</small> <button id="adminRefresh">🔄 রিফ্রেশ</button></p>
     <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center">
-      <input id="adminEmail" type="email" placeholder="নতুন Gmail (ex@gmail.com)" style="flex:1;min-width:180px">
+      <input id="adminEmail" type="email" placeholder="নতুন Gmail" style="flex:1;min-width:180px">
       <div class="pass-wrap" style="width:140px;display:inline-flex;flex:1">
-        <input id="adminPass" type="password" placeholder="পাসওয়ার্ড (৬+)" style="width:100%">
+        <input id="adminPass" type="password" placeholder="পাসওয়ার্ড" style="width:100%">
         <button id="toggleAdminPass" type="button" title="দেখুন/লুকান" style="width:40px">👁️</button>
       </div>
-      <input id="adminName" type="text" placeholder="নাম (ঐচ্ছিক)" style="width:120px">
-      <button id="adminAdd">➕ যোগ করুন</button>
+      <input id="adminName" type="text" placeholder="নাম" style="width:120px">
+      <button id="adminAdd">➕ যোগ</button>
     </div>
     <p id="adminMsg" style="min-height:18px;color:#ffd60a"></p>
     <div id="adminList" style="text-align:left;max-height:42vh;overflow:auto"></div>
@@ -172,7 +192,7 @@
   </div>
 </div>
 
-<!-- Call modal -->
+<!-- 1-1 Call modal -->
 <div id="callModal" class="modal hidden">
   <div class="modal-card">
     <h3 id="callTitle">📞 কল</h3>
@@ -182,8 +202,22 @@
   </div>
 </div>
 
-<script src="voice.js?v=5"></script>
-<script src="app.js?v=5"></script>
+<!-- Group Call modal -->
+<div id="groupCallModal" class="modal hidden">
+  <div class="modal-card" style="min-width:90vw;min-height:70vh;display:flex;flex-direction:column">
+    <h3 id="groupCallTitle">👥 গ্রুপ কল</h3>
+    <div id="groupVideoGrid" class="group-video-grid"></div>
+    <p id="groupCallStatus">সংযোগ হচ্ছে...</p>
+    <div style="display:flex;gap:8px;justify-content:center">
+      <button id="groupCallMute" style="background:#2a3942">🎤 মিউট</button>
+      <button id="groupCallCamToggle" style="background:#2a3942">📷 ক্যাম বন্ধ</button>
+      <button id="groupCallHang" style="background:#ff3b30">🔴 ছেড়ে দিন</button>
+    </div>
+  </div>
+</div>
+
+<script src="voice.js?v=6"></script>
+<script src="app.js?v=6"></script>
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});

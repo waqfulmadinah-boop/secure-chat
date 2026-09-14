@@ -15,7 +15,7 @@ async function api(path, opts = {}) {
 }
 function escapeHtml(s) { return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
-// ---- Password toggle ----
+// ---- Password toggles ----
 function bindToggle(btnId, inputId) {
   const b = $(btnId), inp = $(inputId);
   if (!b || !inp) return;
@@ -23,6 +23,31 @@ function bindToggle(btnId, inputId) {
 }
 bindToggle('togglePass', 'password');
 bindToggle('toggleAdminPass', 'adminPass');
+bindToggle('toggleRegPass', 'regPassword');
+
+// ---- Login/Register toggle ----
+safeBind('showRegister', 'onclick', (e) => { e.preventDefault(); $('loginScreen').classList.add('hidden'); $('registerScreen').classList.remove('hidden'); });
+safeBind('showLogin', 'onclick', (e) => { e.preventDefault(); $('registerScreen').classList.add('hidden'); $('loginScreen').classList.remove('hidden'); });
+
+// ---- Registration ----
+safeBind('registerBtn', 'onclick', async () => {
+  const errEl = $('regError'); if (errEl) errEl.textContent = '';
+  const name = $('regName') ? $('regName').value.trim() : '';
+  const email = $('regEmail') ? $('regEmail').value.trim() : '';
+  const password = $('regPassword') ? $('regPassword').value : '';
+  const btn = $('registerBtn');
+  if (!email || !password) { if (errEl) errEl.textContent = 'Gmail ও পাসওয়ার্ড দিন।'; return; }
+  if (btn) btn.textContent = 'রেজিস্ট্রেশন হচ্ছে...';
+  try {
+    const j = await api('/api/register', { method: 'POST', body: JSON.stringify({ email, password, name }) });
+    token = j.token; localStorage.setItem('sc_token', token);
+    me = { email: j.email, name: j.displayName || j.name, displayName: j.displayName || j.name, avatar: j.avatar };
+    users = j.allowedUsers || [];
+    enterApp();
+  } catch (e) { if (errEl) errEl.textContent = '⛔ ' + e.message; }
+  if (btn) btn.textContent = 'রেজিস্ট্রেশন করুন';
+});
+safeBind('regPassword', 'onkeydown', function(e) { if (e.key === 'Enter') $('registerBtn').click(); });
 
 // ---- Login ----
 let loginEmail = '';
@@ -69,8 +94,9 @@ safeBind('otpVerify', 'onclick', async () => {
 
 const ADMIN_EMAIL = 'waqfulmadinah@gmail.com';
 async function enterApp() {
-  const ls = $('loginScreen'); if (ls) ls.classList.add('hidden');
-  const app = $('app'); if (app) app.classList.remove('hidden');
+  $('loginScreen')?.classList.add('hidden');
+  $('registerScreen')?.classList.add('hidden');
+  $('app')?.classList.remove('hidden');
   if (me) {
     const n = $('meName'), e = $('meEmail'), av = $('meAvatar');
     if (n) n.textContent = me.displayName || me.name;
@@ -85,7 +111,6 @@ async function enterApp() {
   }
   connectSocket();
   renderChatList();
-  // Fetch profiles first so sender names show correctly
   await fetchProfiles();
   const msgs = await api('/api/messages').catch(() => []);
   msgs.forEach(addMsg);
@@ -101,7 +126,7 @@ async function fetchProfiles() {
 // ---- Socket ----
 function connectSocket() {
   socket = io({ auth: { token } });
-  socket.on('connect_error', () => { alert('⛔ প্রবেশাধিকার নেই / সেশন শেষ।'); logout(); });
+  socket.on('connect_error', () => { alert('⛔ সেশন শেষ।'); logout(); });
   socket.on('force-logout', (d) => { alert(d.reason || 'লগআউট'); logout(); });
   socket.on('chat:message', (m) => { if (m.to === 'group' || m.from === me.email || m.to === me.email) addMsg(m); });
   socket.on('chat:typing', (d) => {
@@ -116,6 +141,12 @@ function connectSocket() {
   });
   socket.on('call:signal', async (d) => { if (pc) try { await pc.setRemoteDescription(d.signal); } catch {} });
   socket.on('call:end', () => endCallUI());
+
+  // Group call events
+  socket.on('groupcall:peers', handleGroupCallPeers);
+  socket.on('groupcall:new-peer', handleGroupCallNewPeer);
+  socket.on('groupcall:signal', handleGroupCallSignal);
+  socket.on('groupcall:peer-left', handleGroupCallPeerLeft);
 }
 
 // ---- Chat list ----
@@ -130,10 +161,9 @@ function renderChatList() {
   const others = [...new Set([...users.map(u => u.email), ...guessPeers()])].filter(e => e !== me.email);
   others.forEach(email => {
     const el = document.createElement('div');
-    const peer = (adminCache?.users || []).find(u => u.email === email) || {};
     const prof = profileMap[email] || {};
-    const avatar = prof.avatar || peer.avatar;
-    const displayName = prof.name || peer.name || email.split('@')[0];
+    const displayName = prof.name || email.split('@')[0];
+    const avatar = prof.avatar;
     el.className = 'chat-item' + (currentPeer === email ? ' active' : '');
     el.id = 'peer-' + email;
     const avatarHtml = avatar
@@ -153,7 +183,7 @@ async function refreshAdminList() {
   if (al) al.innerHTML = d.users.map(u =>
     '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px;border-bottom:1px solid #222d34">' +
     '<span>' + (u.online ? '🟢' : '⚪') + ' <b>' + escapeHtml(u.name) + '</b> <small>' + escapeHtml(u.email) + '</small><br><small style="color:#8696a0">🔑 ' + (u.regCode || 'N/A') + '</small></span>' +
-    '<span><button onclick="resetPass(\'' + u.email + '\')" title="পাসওয়ার্ড রিসেট">🔑</button> ' +
+    '<span><button onclick="resetPass(\'' + u.email + '\')" title="রিসেট">🔑</button> ' +
     (u.email === ADMIN_EMAIL ? '👑' : '<button onclick="removeUser(\'' + u.email + '\')" title="সরাও">🗑️</button>') +
     '</span></div>'
   ).join('');
@@ -168,10 +198,9 @@ function switchPeer(p) {
   currentPeer = p; replyTo = null;
   const rb = $('replyBar'); if (rb) rb.classList.add('hidden');
   document.querySelectorAll('.chat-item').forEach(x => x.classList.remove('active'));
-  const peerInfo = (adminCache?.users || []).find(u => u.email === p) || {};
   const prof = profileMap[p] || {};
-  const displayName = prof.name || peerInfo.name || p.split('@')[0];
-  const avatar = prof.avatar || peerInfo.avatar;
+  const displayName = prof.name || p.split('@')[0];
+  const avatar = prof.avatar;
   const pn = $('peerName'); if (pn) pn.textContent = p === 'group' ? 'গ্রুপ চ্যাট' : displayName;
   const pa = $('peerAvatar');
   if (pa) {
@@ -190,8 +219,8 @@ function updatePresence(list) {
 
 // ---- Messages ----
 function getUserInfo(email) {
-  const u = users.find(x => x.email === email) || adminCache?.users?.find(x => x.email === email) || {};
   const p = profileMap[email] || {};
+  const u = users.find(x => x.email === email) || {};
   return { displayName: p.name || u.name || email.split('@')[0], avatar: p.avatar || u.avatar || null };
 }
 function addMsg(m) {
@@ -203,44 +232,63 @@ function addMsg(m) {
   const time = new Date(m.at).toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' });
   let inner = '';
   if (m.replyTo) inner += '<div class="reply">↩️ ' + escapeHtml(m.replyTo) + '</div>';
-  // Sender info for others' messages — name + avatar
   if (!mine) {
     const avatarHtml = info.avatar
       ? '<img src="' + info.avatar + '" class="sender-avatar">'
       : '<span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#00a884;color:#fff;font-size:10px;font-weight:800">' + info.displayName[0].toUpperCase() + '</span>';
     inner += '<div class="sender-name">' + avatarHtml + ' ' + escapeHtml(info.displayName) + '</div>';
   }
-  // Media
   if (m.media) {
     const mt = m.media.mimeType || '';
-    if (mt.startsWith('image/')) inner += '<img class="media-preview" src="' + m.media.dataUrl + '" onclick="window.open(\'' + m.media.dataUrl + '\',\'_blank\')">';
-    else if (mt.startsWith('video/')) inner += '<video class="media-preview" controls src="' + m.media.dataUrl + '"></video>';
-    else if (mt.startsWith('audio/')) inner += '<audio controls src="' + m.media.dataUrl + '"></audio>';
-    else inner += '📄 <a href="' + m.media.dataUrl + '" download="' + (m.media.fileName || 'file') + '" style="color:#53bdeb">' + escapeHtml(m.media.fileName || 'ফাইল') + '</a>';
+    if (mt.startsWith('image/')) inner += '<img class="media-preview" src="' + m.media.url + '" onclick="window.open(\'' + m.media.url + '\',\'_blank\')">';
+    else if (mt.startsWith('video/')) inner += '<video class="media-preview" controls src="' + m.media.url + '"></video>';
+    else if (mt.startsWith('audio/')) inner += '<audio controls src="' + m.media.url + '"></audio>';
+    else inner += '📄 <a href="' + m.media.url + '" download="' + (m.media.fileName || 'file') + '" style="color:#53bdeb">' + escapeHtml(m.media.fileName || 'ফাইল') + '</a>';
     if (m.text && m.text !== m.media.fileName) inner += '<div>' + escapeHtml(m.text) + '</div>';
   } else if (m.type === 'voice' && m.voice) {
-    inner += '🎤 <audio controls src="' + m.voice.dataUrl + '"></audio> <small>(' + m.voice.duration + 's)</small>';
+    inner += '🎤 <audio controls src="' + m.voice.url + '"></audio> <small>(' + m.voice.duration + 's)</small>';
   } else {
     inner += escapeHtml(m.text);
   }
   inner += '<div class="meta">' + time + (mine ? ' <span class="tick">✓✓</span>' : '') + '</div>';
   div.innerHTML = inner;
   div.ondblclick = () => { replyTo = m.text || 'মেসেজ'; const rt = $('replyText'); if (rt) rt.textContent = replyTo.slice(0, 60); const rb = $('replyBar'); if (rb) rb.classList.remove('hidden'); };
-  div.oncontextmenu = (e) => { e.preventDefault(); const r = prompt('রিয়্যাকশন দিন (❤️ 👍 😂 😮 😢):', '❤️'); if (r) div.innerHTML += ' ' + r; };
+  div.oncontextmenu = (e) => { e.preventDefault(); const r = prompt('রিয়্যাকশন (❤️ 👍 😂 😮 😢):', '❤️'); if (r) div.innerHTML += ' ' + r; };
   const msgBox = $('messages'); if (msgBox) { msgBox.appendChild(div); msgBox.scrollTop = 99999; }
   if (!mine) socket?.emit('chat:read', { id: m.id });
   if (m.expiresAt) setTimeout(() => div.remove(), m.expiresAt - Date.now());
 }
 
+// ---- Upload helper ----
+async function uploadFile(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  const r = await fetch('/api/upload', { method: 'POST', headers: { Authorization: 'Bearer ' + token }, body: fd });
+  if (!r.ok) throw new Error('Upload failed');
+  return r.json();
+}
+async function uploadBlob(blob, name) {
+  const file = new File([blob], name, { type: blob.type });
+  return uploadFile(file);
+}
+
 // ---- Send ----
-function send() {
+async function send() {
   let t = $('msgInput') ? $('msgInput').value.trim() : '';
   if (!t && !pendingMedia.length) return;
   if (/[\u0980-\u09FF]$/.test(t) && !/[।?!]$/.test(t)) t += '।';
+  const disappearSec = Number($('disappear') ? $('disappear').value : 0) || null;
   for (const m of pendingMedia) {
-    socket.emit('chat:message', { to: currentPeer, text: t || m.fileName, media: m, replyTo, disappearSec: Number($('disappear') ? $('disappear').value : 0) || null });
+    try {
+      // Upload file to server, get URL
+      const uploaded = await uploadFile(m.file);
+      socket.emit('chat:message', { to: currentPeer, text: t || m.fileName, media: { url: uploaded.url, mimeType: uploaded.mimeType, fileName: uploaded.fileName }, replyTo, disappearSec });
+    } catch (e) {
+      // Fallback: send as base64
+      socket.emit('chat:message', { to: currentPeer, text: t || m.fileName, media: { url: m.dataUrl, mimeType: m.mimeType, fileName: m.fileName }, replyTo, disappearSec });
+    }
   }
-  if (!pendingMedia.length) socket.emit('chat:message', { to: currentPeer, text: t, replyTo, disappearSec: Number($('disappear') ? $('disappear').value : 0) || null });
+  if (!pendingMedia.length) socket.emit('chat:message', { to: currentPeer, text: t, replyTo, disappearSec });
   if ($('msgInput')) $('msgInput').value = '';
   pendingMedia = []; replyTo = null;
   const bar = document.querySelector('.media-preview-bar'); if (bar) bar.remove();
@@ -264,7 +312,7 @@ safeBind('logoutBtn', 'onclick', logout);
 
 // ---- Voice typing ----
 safeBind('voiceTypeBtn', 'onclick', () => {
-  if (!window.VoiceTyper || !VoiceTyper.supported()) { alert('Chrome / Edge-এ 🎙️ ভয়েস টাইপিং সবচেয়ে ভালো চলে।'); return; }
+  if (!window.VoiceTyper || !VoiceTyper.supported()) { alert('Chrome / Edge-এ 🎙️ ভয়েস টাইপিং সেরা।'); return; }
   VoiceTyper.isListening() ? VoiceTyper.stop() : VoiceTyper.start($('msgInput'));
 });
 safeBind('voiceStop', 'onclick', () => { if (window.VoiceTyper) VoiceTyper.stop(); });
@@ -277,12 +325,17 @@ safeBind('voiceMsgBtn', 'onclick', async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     mr = new MediaRecorder(stream); chunks = []; recStart = Date.now();
     mr.ondataavailable = (e) => chunks.push(e.data);
-    mr.onstop = () => {
+    mr.onstop = async () => {
       const dur = Math.round((Date.now() - recStart) / 1000);
       const blob = new Blob(chunks, { type: 'audio/webm' });
-      const rd = new FileReader();
-      rd.onload = () => { socket.emit('chat:message', { to: currentPeer, voice: { dataUrl: rd.result, duration: dur }, text: '🎤' }); };
-      rd.readAsDataURL(blob);
+      try {
+        const uploaded = await uploadBlob(blob, 'voice-' + Date.now() + '.webm');
+        socket.emit('chat:message', { to: currentPeer, voice: { url: uploaded.url, duration: dur }, text: '🎤' });
+      } catch {
+        const rd = new FileReader();
+        rd.onload = () => { socket.emit('chat:message', { to: currentPeer, voice: { url: rd.result, duration: dur }, text: '🎤' }); };
+        rd.readAsDataURL(blob);
+      }
       mr = null;
       const btn = $('voiceMsgBtn'); if (btn) btn.textContent = '🎤';
       stream.getTracks().forEach(t => t.stop());
@@ -294,8 +347,8 @@ safeBind('voiceMsgBtn', 'onclick', async () => {
 });
 
 // ---- Status ----
-safeBind('statusBtn', 'onclick', () => { const m = $('statusModal'); if (m) m.classList.remove('hidden'); renderStatus(); });
-safeBind('statusClose', 'onclick', () => { const m = $('statusModal'); if (m) m.classList.add('hidden'); });
+safeBind('statusBtn', 'onclick', () => { $('statusModal')?.classList.remove('hidden'); renderStatus(); });
+safeBind('statusClose', 'onclick', () => { $('statusModal')?.classList.add('hidden'); });
 safeBind('statusPost', 'onclick', () => {
   const inp = $('statusText');
   const t = inp ? inp.value.trim() : ''; if (!t) return;
@@ -312,13 +365,13 @@ function renderStatus() {
 }
 
 // ---- Admin panel ----
-safeBind('adminBtn', 'onclick', async () => { const m = $('adminModal'); if (m) m.classList.remove('hidden'); try { await refreshAdminList(); } catch (e) { const msg = $('adminMsg'); if (msg) msg.textContent = '⛔ ' + e.message; } });
-safeBind('adminClose', 'onclick', () => { const m = $('adminModal'); if (m) m.classList.add('hidden'); });
-safeBind('adminRefresh', 'onclick', () => refreshAdminList().catch(e => { const msg = $('adminMsg'); if (msg) msg.textContent = '⛔ ' + e.message; }));
+safeBind('adminBtn', 'onclick', async () => { $('adminModal')?.classList.remove('hidden'); try { await refreshAdminList(); } catch (e) { $('adminMsg').textContent = '⛔ ' + e.message; } });
+safeBind('adminClose', 'onclick', () => { $('adminModal')?.classList.add('hidden'); });
+safeBind('adminRefresh', 'onclick', () => refreshAdminList().catch(e => { $('adminMsg').textContent = '⛔ ' + e.message; }));
 safeBind('adminAdd', 'onclick', async () => {
   const msg = $('adminMsg'); if (msg) msg.textContent = 'যোগ হচ্ছে...';
   try {
-    await api('/api/admin/add-user', { method: 'POST', body: JSON.stringify({ email: $('adminEmail') ? $('adminEmail').value.trim() : '', password: $('adminPass') ? $('adminPass').value : '', name: $('adminName') ? $('adminName').value.trim() : '' }) });
+    await api('/api/admin/add-user', { method: 'POST', body: JSON.stringify({ email: $('adminEmail')?.value.trim(), password: $('adminPass')?.value, name: $('adminName')?.value.trim() }) });
     if (msg) msg.textContent = '✅ যোগ হয়েছে';
     if ($('adminEmail')) $('adminEmail').value = '';
     if ($('adminPass')) $('adminPass').value = '';
@@ -327,49 +380,222 @@ safeBind('adminAdd', 'onclick', async () => {
   } catch (e) { if (msg) msg.textContent = '⛔ ' + e.message; }
 });
 async function removeUser(email) { if (!confirm(email + ' কে সরাবেন?')) return; try { await api('/api/admin/remove-user', { method: 'POST', body: JSON.stringify({ email }) }); await refreshAdminList(); } catch (e) { alert(e.message); } }
-async function resetPass(email) { const p = prompt(email + ' এর নতুন পাসওয়ার্ড (৬+):'); if (!p) return; try { await api('/api/admin/reset-password', { method: 'POST', body: JSON.stringify({ email, password: p }) }); alert('✅ পাসওয়ার্ড রিসেট হয়েছে'); } catch (e) { alert(e.message); } }
+async function resetPass(email) { const p = prompt(email + ' এর নতুন পাসওয়ার্ড (৬+):'); if (!p) return; try { await api('/api/admin/reset-password', { method: 'POST', body: JSON.stringify({ email, password: p }) }); alert('✅ রিসেট হয়েছে'); } catch (e) { alert(e.message); } }
 window.removeUser = removeUser; window.resetPass = resetPass;
 
-// ---- Calls (WebRTC) ----
+// ---- 1-1 Calls (WebRTC) ----
 let pc = null, localStream = null, callPeer = null;
 async function acceptCall(from, kind, isCaller) {
   callPeer = from;
-  const cm = $('callModal'); if (cm) cm.classList.remove('hidden');
-  const ct = $('callTitle'); if (ct) ct.textContent = (kind === 'voice' ? '📞 ভয়েস কল: ' : '🎥 ভিডিও কল: ') + from;
+  $('callModal')?.classList.remove('hidden');
+  $('callTitle').textContent = (kind === 'voice' ? '📞 ' : '🎥 ') + from;
   localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: kind !== 'voice' }).catch(() => null);
-  if (!localStream) { const cs = $('callStatus'); if (cs) cs.textContent = 'ক্যামেরা/মাইক পাওয়া যায়নি'; return; }
-  if (kind === 'voice') { const lv = $('localVideo'); const rv = $('remoteVideo'); if (lv) lv.style.display = 'none'; if (rv) rv.style.display = 'none'; }
-  const lv = $('localVideo'); if (lv) lv.srcObject = localStream;
-  pc = new RTCPeerConnection();
+  if (!localStream) { $('callStatus').textContent = 'ক্যামেরা/মাইক পাওয়া যায়নি'; return; }
+  if (kind === 'voice') { $('localVideo').style.display = 'none'; $('remoteVideo').style.display = 'none'; }
+  $('localVideo').srcObject = localStream;
+  pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
   localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-  pc.ontrack = (e) => { const rv = $('remoteVideo'); if (rv) rv.srcObject = e.streams[0]; };
+  pc.ontrack = (e) => { $('remoteVideo').srcObject = e.streams[0]; };
   pc.onicecandidate = (e) => { if (e.candidate) socket.emit('call:signal', { to: callPeer, signal: { candidate: e.candidate } }); };
   if (isCaller) {
     const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
     socket.emit('call:signal', { to: callPeer, signal: pc.localDescription });
   }
-  const cs = $('callStatus'); if (cs) cs.textContent = '🔊 সংযুক্ত...';
+  $('callStatus').textContent = '🔊 সংযুক্ত...';
 }
 safeBind('voiceCallBtn', 'onclick', () => { if (currentPeer === 'group') return alert('1-1 চ্যাটে গিয়ে কল দিন।'); socket.emit('call:invite', { to: currentPeer, kind: 'voice' }); acceptCall(currentPeer, 'voice', true); });
 safeBind('videoCallBtn', 'onclick', () => { if (currentPeer === 'group') return alert('1-1 চ্যাটে গিয়ে কল দিন।'); socket.emit('call:invite', { to: currentPeer, kind: 'video' }); acceptCall(currentPeer, 'video', true); });
 safeBind('callHang', 'onclick', () => { if (callPeer) socket.emit('call:end', { to: callPeer }); endCallUI(); });
 function endCallUI() {
-  const cm = $('callModal'); if (cm) cm.classList.add('hidden');
-  const cs = $('callStatus'); if (cs) cs.textContent = 'সংযোগ হচ্ছে...';
+  $('callModal')?.classList.add('hidden');
+  $('callStatus').textContent = 'সংযোগ হচ্ছে...';
   try { pc?.close(); localStream?.getTracks().forEach(t => t.stop()); } catch {}
   pc = null; callPeer = null;
 }
 
+// ---- Group Call (WebRTC Mesh) ----
+let groupCallActive = false;
+let groupCallMuted = false;
+let groupCallCamOff = false;
+let groupCallStream = null;
+let groupCallRoomId = 'group';
+const groupPeers = new Map(); // email -> { pc, videoEl }
+
+safeBind('groupCallBtn', 'onclick', () => {
+  if (groupCallActive) return;
+  groupCallRoomId = 'group';
+  startGroupCall();
+});
+
+async function startGroupCall() {
+  try {
+    groupCallStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+  } catch {
+    groupCallStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  }
+  groupCallActive = true;
+  $('groupCallModal')?.classList.remove('hidden');
+  $('groupCallTitle').textContent = '👥 গ্রুপ কল — গ্রুপ চ্যাট';
+  $('groupCallStatus').textContent = 'যোগদান হচ্ছে...';
+  // Show local video
+  updateGroupVideoGrid();
+  addGroupVideo(me.email, groupCallStream, true);
+  socket.emit('groupcall:join', { roomId: groupCallRoomId });
+}
+
+function addGroupVideo(email, stream, isLocal) {
+  const grid = $('groupVideoGrid');
+  if (!grid) return;
+  // Remove existing for this email
+  const existing = grid.querySelector('[data-email="' + CSS.escape(email) + '"]');
+  if (existing) existing.remove();
+
+  const wrap = document.createElement('div');
+  wrap.className = 'group-video-item';
+  wrap.setAttribute('data-email', email);
+  const vid = document.createElement('video');
+  vid.srcObject = stream;
+  vid.muted = !!isLocal;
+  vid.playsInline = true;
+  vid.autoplay = true;
+  if (isLocal) vid.style.transform = 'scaleX(-1)';
+  const label = document.createElement('div');
+  label.className = 'group-video-label';
+  const prof = profileMap[email] || {};
+  label.textContent = prof.name || email.split('@')[0];
+  wrap.appendChild(vid);
+  wrap.appendChild(label);
+  grid.appendChild(wrap);
+}
+
+function updateGroupVideoGrid() {
+  const grid = $('groupVideoGrid');
+  if (!grid) return;
+  // Add local video
+  addGroupVideo(me.email, groupCallStream, true);
+}
+
+function handleGroupCallPeers(d) {
+  // d.peers = array of emails already in the room
+  // We need to create peer connections to each
+  for (const peerEmail of d.peers) {
+    createGroupPeerConnection(peerEmail, true); // we are the initiator
+  }
+  $('groupCallStatus').textContent = '🔗 ' + d.peers.length + ' জন সংযুক্ত';
+}
+
+async function handleGroupCallNewPeer(d) {
+  // A new peer joined — they will create the offer, we just wait
+  createGroupPeerConnection(d.from, false);
+  $('groupCallStatus').textContent = '🔗 ' + (groupPeers.size + 1) + ' জন সংযুক্ত';
+}
+
+async function createGroupPeerConnection(peerEmail, isInitiator) {
+  if (groupPeers.has(peerEmail)) return;
+  const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  groupPeers.set(peerEmail, { pc });
+
+  groupCallStream.getTracks().forEach(t => pc.addTrack(t, groupCallStream));
+
+  pc.ontrack = (e) => {
+    addGroupVideo(peerEmail, e.streams[0], false);
+  };
+
+  pc.onicecandidate = (e) => {
+    if (e.candidate) socket.emit('groupcall:signal', { to: peerEmail, signal: { candidate: e.candidate }, roomId: groupCallRoomId });
+  };
+
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+      removeGroupVideo(peerEmail);
+      groupPeers.delete(peerEmail);
+    }
+  };
+
+  if (isInitiator) {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    socket.emit('groupcall:signal', { to: peerEmail, signal: pc.localDescription, roomId: groupCallRoomId });
+  }
+}
+
+async function handleGroupCallSignal(d) {
+  const peer = groupPeers.get(d.from);
+  if (!peer) {
+    // First signal from this peer — create our side
+    await createGroupPeerConnection(d.from, false);
+  }
+  const peer2 = groupPeers.get(d.from);
+  if (!peer2) return;
+  try {
+    if (d.signal.candidate) {
+      await peer2.pc.addIceCandidate(d.signal.candidate);
+    } else if (d.signal.sdp) {
+      await peer2.pc.setRemoteDescription(d.signal);
+      if (d.signal.type === 'offer') {
+        const answer = await peer2.pc.createAnswer();
+        await peer2.pc.setLocalDescription(answer);
+        socket.emit('groupcall:signal', { to: d.from, signal: peer2.pc.localDescription, roomId: groupCallRoomId });
+      }
+    }
+  } catch (e) { console.error('Group call signal error:', e); }
+}
+
+function handleGroupCallPeerLeft(d) {
+  removeGroupVideo(d.from);
+  const peer = groupPeers.get(d.from);
+  if (peer) { try { peer.pc.close(); } catch {} groupPeers.delete(d.from); }
+  $('groupCallStatus').textContent = '🔗 ' + (groupPeers.size + 1) + ' জন সংযুক্ত';
+}
+
+function removeGroupVideo(email) {
+  const grid = $('groupVideoGrid');
+  if (!grid) return;
+  const el = grid.querySelector('[data-email="' + CSS.escape(email) + '"]');
+  if (el) el.remove();
+}
+
+safeBind('groupCallHang', 'onclick', () => {
+  socket.emit('groupcall:leave', { roomId: groupCallRoomId });
+  endGroupCallUI();
+});
+
+safeBind('groupCallMute', 'onclick', () => {
+  if (!groupCallStream) return;
+  groupCallMuted = !groupCallMuted;
+  groupCallStream.getAudioTracks().forEach(t => t.enabled = !groupCallMuted);
+  $('groupCallMute').textContent = groupCallMuted ? '🎤 আনমিউট' : '🎤 মিউট';
+});
+
+safeBind('groupCallCamToggle', 'onclick', () => {
+  if (!groupCallStream) return;
+  const videoTracks = groupCallStream.getVideoTracks();
+  if (!videoTracks.length) return;
+  groupCallCamOff = !groupCallCamOff;
+  videoTracks.forEach(t => t.enabled = !groupCallCamOff);
+  $('groupCallCamToggle').textContent = groupCallCamOff ? '📷 ক্যাম চালু' : '📷 ক্যাম বন্ধ';
+});
+
+function endGroupCallUI() {
+  $('groupCallModal')?.classList.add('hidden');
+  for (const [email, peer] of groupPeers) { try { peer.pc.close(); } catch {} }
+  groupPeers.clear();
+  if (groupCallStream) { groupCallStream.getTracks().forEach(t => t.stop()); groupCallStream = null; }
+  groupCallActive = false; groupCallMuted = false; groupCallCamOff = false;
+  const grid = $('groupVideoGrid'); if (grid) grid.innerHTML = '';
+  $('groupCallMute').textContent = '🎤 মিউট';
+  $('groupCallCamToggle').textContent = '📷 ক্যাম বন্ধ';
+}
+
 // ---- Media Upload ----
-// Use BOTH label-for AND direct onclick for maximum compatibility
 safeBind('mediaBtn', 'onclick', (e) => {
   e.preventDefault();
   const inp = $('mediaInput'); if (inp) inp.click();
 });
-safeBind('mediaInput', 'onchange', async (e) => {
+safeBind('mediaInput', 'onchange', (e) => {
   for (const file of e.target.files) {
     const rd = new FileReader();
-    rd.onload = () => { pendingMedia.push({ dataUrl: rd.result, mimeType: file.type, fileName: file.name }); showMediaPreview(); };
+    rd.onload = () => { pendingMedia.push({ file, dataUrl: rd.result, mimeType: file.type, fileName: file.name }); showMediaPreview(); };
     rd.readAsDataURL(file);
   }
   e.target.value = '';
@@ -393,33 +619,33 @@ function showMediaPreview() {
   const msgBox = $('messages'); if (msgBox) msgBox.before(bar);
 }
 
-// ---- Settings (Profile + 2FA + Theme) ----
+// ---- Settings ----
 safeBind('settingsBtn', 'onclick', async () => {
-  const m = $('settingsModal'); if (m) m.classList.remove('hidden');
-  const ni = $('profileNameInput'); if (ni) ni.value = me.displayName || me.name || '';
+  $('settingsModal')?.classList.remove('hidden');
+  $('profileNameInput').value = me.displayName || me.name || '';
   const ap = $('profileAvatarPreview');
   if (ap) {
     if (me.avatar) ap.innerHTML = '<img src="' + me.avatar + '" style="width:100%;height:100%;object-fit:cover">';
     else ap.textContent = (me.displayName || me.name || 'U')[0].toUpperCase();
   }
-  const ts = $('twofaStatus'); if (ts) ts.textContent = 'বর্তমান স্ট্যাটাস: ' + (me.twofaEnabled ? '✅ চালু' : '❌ বন্ধ');
+  $('twofaStatus').textContent = 'বর্তমান: ' + (me.twofaEnabled ? '✅ চালু' : '❌ বন্ধ');
 });
-safeBind('settingsClose', 'onclick', () => { const m = $('settingsModal'); if (m) m.classList.add('hidden'); });
+safeBind('settingsClose', 'onclick', () => { $('settingsModal')?.classList.add('hidden'); });
 
 let pendingAvatar = null, avatarRemoved = false;
-safeBind('changeAvatarBtn', 'onclick', () => { const inp = $('profileAvatarInput'); if (inp) inp.click(); });
+safeBind('changeAvatarBtn', 'onclick', () => { $('profileAvatarInput')?.click(); });
 safeBind('profileAvatarInput', 'onchange', (e) => {
   const file = e.target.files[0]; if (!file) return;
   const rd = new FileReader();
-  rd.onload = () => { pendingAvatar = rd.result; const ap = $('profileAvatarPreview'); if (ap) ap.innerHTML = '<img src="' + pendingAvatar + '" style="width:100%;height:100%;object-fit:cover">'; };
+  rd.onload = () => { pendingAvatar = rd.result; $('profileAvatarPreview').innerHTML = '<img src="' + pendingAvatar + '" style="width:100%;height:100%;object-fit:cover">'; };
   rd.readAsDataURL(file);
 });
-safeBind('removeAvatarBtn', 'onclick', () => { pendingAvatar = null; avatarRemoved = true; me.avatar = null; const ap = $('profileAvatarPreview'); if (ap) ap.textContent = (me.displayName || 'U')[0].toUpperCase(); });
+safeBind('removeAvatarBtn', 'onclick', () => { pendingAvatar = null; avatarRemoved = true; me.avatar = null; $('profileAvatarPreview').textContent = (me.displayName || 'U')[0].toUpperCase(); });
 
 safeBind('saveProfile', 'onclick', async () => {
   const pm = $('profileMsg'); if (pm) pm.textContent = 'সেভ হচ্ছে...';
   try {
-    const body = { displayName: $('profileNameInput') ? $('profileNameInput').value.trim() : '' };
+    const body = { displayName: $('profileNameInput')?.value.trim() };
     if (avatarRemoved) body.avatar = '';
     else if (pendingAvatar) body.avatar = pendingAvatar;
     const j = await api('/api/profile/update', { method: 'POST', body: JSON.stringify(body) });
@@ -429,7 +655,7 @@ safeBind('saveProfile', 'onclick', async () => {
       if (j.avatar) av.innerHTML = '<img src="' + j.avatar + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover">';
       else av.textContent = (j.displayName || 'U')[0].toUpperCase();
     }
-    const mn = $('meName'); if (mn) mn.textContent = j.displayName;
+    $('meName').textContent = j.displayName;
     pendingAvatar = null; avatarRemoved = false;
     if (pm) pm.textContent = '✅ প্রোফাইল সেভ হয়েছে';
     renderChatList();
@@ -439,7 +665,7 @@ safeBind('saveProfile', 'onclick', async () => {
 safeBind('changePassBtn', 'onclick', async () => {
   const pm = $('passMsg'); if (pm) pm.textContent = '';
   try {
-    await api('/api/profile/update', { method: 'POST', body: JSON.stringify({ oldPassword: $('oldPassInput') ? $('oldPassInput').value : '', newPassword: $('newPassInput') ? $('newPassInput').value : '' }) });
+    await api('/api/profile/update', { method: 'POST', body: JSON.stringify({ oldPassword: $('oldPassInput')?.value, newPassword: $('newPassInput')?.value }) });
     if (pm) pm.textContent = '✅ পাসওয়ার্ড বদলে গেছে';
     if ($('oldPassInput')) $('oldPassInput').value = '';
     if ($('newPassInput')) $('newPassInput').value = '';
@@ -449,12 +675,12 @@ safeBind('changePassBtn', 'onclick', async () => {
 safeBind('toggle2FA', 'onclick', async () => {
   try {
     const j = await api('/api/2fa/enable', { method: 'POST', body: '{}' });
-    const ts = $('twofaStatus'); if (ts) ts.textContent = '✅ 2FA চালু হয়েছে। OTP: ' + j.message.split('OTP: ')[1];
+    $('twofaStatus').textContent = '✅ 2FA চালু। OTP: ' + j.message.split('OTP: ')[1];
     me.twofaEnabled = true;
-  } catch (e) {
+  } catch {
     try {
       await api('/api/2fa/disable', { method: 'POST', body: '{}' });
-      const ts = $('twofaStatus'); if (ts) ts.textContent = '❌ 2FA বন্ধ হয়েছে।';
+      $('twofaStatus').textContent = '❌ 2FA বন্ধ।';
       me.twofaEnabled = false;
     } catch (e2) { alert(e2.message); }
   }

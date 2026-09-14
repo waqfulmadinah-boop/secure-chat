@@ -10,11 +10,12 @@ const rateLimit = require('express-rate-limit');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Server } = require('socket.io');
+const multer = require('multer');
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me';
-const GMAIL_USER = process.env.GMAIL_USER || '';   // e.g. waqfulmadinah@gmail.com
-const GMAIL_PASS = process.env.GMAIL_PASS || '';   // Gmail App Password (16 chars)
+const GMAIL_USER = process.env.GMAIL_USER || '';
+const GMAIL_PASS = process.env.GMAIL_PASS || '';
 let ALLOWED_EMAILS = (process.env.ALLOWED_EMAILS || '')
   .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 const ADMIN_EMAIL = 'waqfulmadinah@gmail.com';
@@ -63,13 +64,11 @@ function persistAllowedEmails() {
     const line = `ALLOWED_EMAILS=${ALLOWED_EMAILS.join(',')}`;
     if (/^ALLOWED_EMAILS=.*$/m.test(env)) env = env.replace(/^ALLOWED_EMAILS=.*$/m, line);
     else env += (env.endsWith('\n') ? '' : '\n') + line + '\n';
-    // DEFAULT_PASSWORDS আপডেট না করলেও চলবে — users.json-ই সত্য
     fs.writeFileSync(ENV_FILE, env, 'utf8');
   } catch (e) { console.error('persist .env error', e.message); }
 }
 
 // ---- User store (users.json) ----
-// User schema: { hash, name, displayName, avatar, registered, regCode, createdAt }
 function loadUsers() {
   try {
     if (fs.existsSync(USERS_FILE)) return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
@@ -79,7 +78,6 @@ function loadUsers() {
 function saveUsers(u) { fs.writeFileSync(USERS_FILE, JSON.stringify(u, null, 2), 'utf8'); }
 
 let users = loadUsers();
-// প্রথম রানে .env এর DEFAULT_PASSWORDS থেকে allowlist user তৈরি
 (function seed() {
   let changed = false;
   const defs = (process.env.DEFAULT_PASSWORDS || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -115,14 +113,27 @@ const app = express();
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
-// No-cache for JS/CSS so users always get latest
+
+// ---- File uploads (multer) ----
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadsDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || '.' + (file.mimetype.split('/')[1] || 'bin');
+    cb(null, Date.now() + '-' + Math.random().toString(36).slice(2, 8) + ext);
+  }
+});
+const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
+
 app.use(express.static(path.join(__dirname, 'public'), {
-  setHeaders: (res, path) => {
-    if (path.endsWith('.js') || path.endsWith('.css')) {
+  setHeaders: (res, p) => {
+    if (p.endsWith('.js') || p.endsWith('.css')) {
       res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
     }
   }
 }));
+app.use('/uploads', express.static(uploadsDir));
 
 const loginLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 30, message: { error: 'অনেকবার চেষ্টা করেছেন। ১০ মিনিট পর আবার চেষ্টা করুন।' } });
 
@@ -131,7 +142,7 @@ function signToken(email) {
   return jwt.sign({ email }, JWT_SECRET, { expiresIn: '7d' });
 }
 function adminMiddleware(req, res, next) {
-  if (req.email !== ADMIN_EMAIL) return res.status(403).json({ error: 'শুধু অ্যাডমিন (' + ADMIN_EMAIL + ') এই কাজ করতে পারবে।' });
+  if (req.email !== ADMIN_EMAIL) return res.status(403).json({ error: 'শুধু অ্যাডমিন এই কাজ করতে পারবে।' });
   next();
 }
 function authMiddleware(req, res, next) {
@@ -149,30 +160,37 @@ function authMiddleware(req, res, next) {
 }
 
 // ---- 2FA OTP Store ----
-const otpStore = new Map(); // email -> {otp, expiresAt}
+const otpStore = new Map();
 function generateOTP() { return String(Math.floor(100000 + Math.random() * 900000)); }
 
+function buildUserList() {
+  return ALLOWED_EMAILS.map(e => ({
+    email: e,
+    name: (users[e] || {}).displayName || (users[e] || {}).name || e.split('@')[0],
+    avatar: (users[e] || {}).avatar || null,
+    online: onlineMap.has(e)
+  }));
+}
+
 // ---- Routes ----
-// 1) Login — শুধু allowlist email + সঠিক password
+// 1) Login
 app.post('/api/login', loginLimiter, async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const password = String(req.body.password || '');
 
-  if (!email.endsWith('@gmail.com')) return res.status(403).json({ error: 'শুধুমাত্র নির্দিষ্ট Gmail দিয়ে প্রবেশ করা যাবে।' });
+  if (!email.endsWith('@gmail.com')) return res.status(403).json({ error: 'শুধুমাত্র Gmail দিয়ে প্রবেশ করা যাবে।' });
   if (!ALLOWED_EMAILS.includes(email)) {
     console.log('Blocked login attempt:', email);
-    return res.status(403).json({ error: 'এই Gmail-এর প্রবেশাধিকার নেই।' });
+    return res.status(403).json({ error: 'এই Gmail-এর প্রবেশাধিকার নেই। রেজিস্ট্রেশন করুন।' });
   }
   const u = users[email];
-  if (!u) return res.status(403).json({ error: 'এই অ্যাকাউন্ট এখনো সক্রিয় করা হয়নি। Admin-এর সাথে যোগাযোগ করুন।' });
+  if (!u) return res.status(403).json({ error: 'এই অ্যাকাউন্ট এখনো সক্রিয় করা হয়নি।' });
   if (!bcrypt.compareSync(password, u.hash)) return res.status(401).json({ error: 'ভুল পাসওয়ার্ড।' });
 
-  // 2FA check
   if (u.twoFactorEnabled) {
     const otp = generateOTP();
     otpStore.set(email, { otp, expiresAt: Date.now() + 5 * 60 * 1000 });
     console.log(`[2FA] OTP for ${email}: ${otp}`);
-    // Send OTP via email
     const emailSent = await sendOTPEmail(email, otp);
     const hint = emailSent
       ? `OTP আপনার Gmail-এ পাঠানো হয়েছে: ${email}`
@@ -181,7 +199,7 @@ app.post('/api/login', loginLimiter, async (req, res) => {
   }
 
   const token = signToken(email);
-  res.json({ token, email, name: u.displayName || u.name, displayName: u.displayName || u.name, avatar: u.avatar || null, allowedUsers: ALLOWED_EMAILS.map(e => ({ email: e, name: (users[e] || {}).displayName || (users[e] || {}).name || e.split('@')[0], avatar: (users[e] || {}).avatar || null, online: onlineMap.has(e) })) });
+  res.json({ token, email, name: u.displayName || u.name, displayName: u.displayName || u.name, avatar: u.avatar || null, allowedUsers: buildUserList() });
 });
 
 // 1b) 2FA verify
@@ -189,29 +207,54 @@ app.post('/api/verify-otp', loginLimiter, (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const otp = String(req.body.otp || '');
   const stored = otpStore.get(email);
-  if (!stored || stored.expiresAt < Date.now()) return res.status(400).json({ error: 'OTP মেয়াদ শেষ হয়েছে। আবার লগইন করুন।' });
+  if (!stored || stored.expiresAt < Date.now()) return res.status(400).json({ error: 'OTP মেয়াদ শেষ। আবার লগইন করুন।' });
   if (stored.otp !== otp) return res.status(401).json({ error: 'ভুল OTP।' });
   otpStore.delete(email);
   const u = users[email] || {};
   const token = signToken(email);
-  res.json({ token, email, name: u.displayName || u.name, displayName: u.displayName || u.name, avatar: u.avatar || null, allowedUsers: ALLOWED_EMAILS.map(e => ({ email: e, name: (users[e] || {}).displayName || (users[e] || {}).name || e.split('@')[0], avatar: (users[e] || {}).avatar || null, online: onlineMap.has(e) })) });
+  res.json({ token, email, name: u.displayName || u.name, displayName: u.displayName || u.name, avatar: u.avatar || null, allowedUsers: buildUserList() });
 });
 
-// 2) প্রোফাইল — নিজের তথ্য দেখা
+// 1d) Self-registration
+app.post('/api/register', loginLimiter, (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const password = String(req.body.password || '');
+  const name = String(req.body.name || '').trim() || email.split('@')[0];
+
+  if (!email.endsWith('@gmail.com')) return res.status(400).json({ error: 'শুধুমাত্র Gmail (@gmail.com) দিয়ে রেজিস্ট্রেশন করা যাবে।' });
+  if (email.length < 10) return res.status(400).json({ error: 'সঠিক Gmail দিন।' });
+  if (!password || password.length < 6) return res.status(400).json({ error: 'পাসওয়ার্ড কমপক্ষে ৬ অক্ষর হতে হবে।' });
+  if (ALLOWED_EMAILS.length >= MAX_USERS) return res.status(400).json({ error: `সর্বোচ্চ ${MAX_USERS} জন ব্যবহারকারী।` });
+  if (ALLOWED_EMAILS.includes(email)) return res.status(400).json({ error: 'এই Gmail আগেই নিবন্ধিত। লগইন করুন।' });
+
+  const regCode = Math.random().toString(36).slice(2, 8).toUpperCase();
+  ALLOWED_EMAILS.push(email);
+  users[email] = {
+    hash: bcrypt.hashSync(password, 10),
+    name: email.split('@')[0],
+    displayName: name,
+    registered: true,
+    regCode,
+    createdAt: Date.now()
+  };
+  saveUsers(users);
+  persistAllowedEmails();
+  console.log(`✅ Self-registered: ${email} | reg-code: ${regCode}`);
+
+  const token = signToken(email);
+  res.json({ token, email, name, displayName: name, avatar: null, regCode, allowedUsers: buildUserList() });
+});
+
+// 2) Profile
 app.get('/api/me', authMiddleware, (req, res) => {
   const u = users[req.email] || {};
-  res.json({ email: req.email, name: u.displayName || u.name || req.email.split('@')[0], displayName: u.displayName || u.name, avatar: u.avatar || null, registered: u.registered, regCode: u.regCode,
-    allowedUsers: ALLOWED_EMAILS.map(e => ({ email: e, name: (users[e] || {}).displayName || (users[e] || {}).name || e.split('@')[0], avatar: (users[e] || {}).avatar || null, online: onlineMap.has(e) }))
-  });
+  res.json({ email: req.email, name: u.displayName || u.name || req.email.split('@')[0], displayName: u.displayName || u.name, avatar: u.avatar || null, registered: u.registered, regCode: u.regCode, allowedUsers: buildUserList() });
 });
 
-// 2b) প্রোফাইল আপডেট (নাম, ছবি, পাসওয়ার্ড)
 app.post('/api/profile/update', authMiddleware, (req, res) => {
   const u = users[req.email]; if (!u) return res.status(404).json({ error: 'Not found' });
   if (req.body.displayName) u.displayName = String(req.body.displayName).trim().slice(0, 30);
-  if (req.body.avatar !== undefined) {
-    u.avatar = req.body.avatar || null; // empty string → remove avatar
-  }
+  if (req.body.avatar !== undefined) u.avatar = req.body.avatar || null;
   if (req.body.newPassword) {
     if (!req.body.oldPassword) return res.status(400).json({ error: 'পুরনো পাসওয়ার্ড দিন।' });
     if (!bcrypt.compareSync(String(req.body.oldPassword), u.hash)) return res.status(401).json({ error: 'পুরনো পাসওয়ার্ড ভুল।' });
@@ -222,7 +265,6 @@ app.post('/api/profile/update', authMiddleware, (req, res) => {
   res.json({ ok: true, displayName: u.displayName, avatar: u.avatar || null });
 });
 
-// 2d) সব ইউজারের প্রোফাইল (চ্যাটে নাম+ছবি দেখাতে)
 app.get('/api/profiles', authMiddleware, (req, res) => {
   const profiles = {};
   for (const email of ALLOWED_EMAILS) {
@@ -232,7 +274,6 @@ app.get('/api/profiles', authMiddleware, (req, res) => {
   res.json(profiles);
 });
 
-// 2c) অন্যদের প্রোফাইল দেখা
 app.get('/api/profile/:email', authMiddleware, (req, res) => {
   const email = req.params.email.toLowerCase();
   const u = users[email];
@@ -240,26 +281,26 @@ app.get('/api/profile/:email', authMiddleware, (req, res) => {
   res.json({ email, name: u.displayName || u.name, displayName: u.displayName || u.name, avatar: u.avatar || null });
 });
 
-// 1c) 2FA enable/disable
+// 2FA
 app.post('/api/2fa/enable', authMiddleware, async (req, res) => {
   const u = users[req.email]; if (!u) return res.status(404).json({ error: 'Not found' });
   u.twoFactorEnabled = true; saveUsers(users);
   const otp = generateOTP(); otpStore.set(req.email, { otp, expiresAt: Date.now() + 5 * 60 * 1000 });
   console.log(`[2FA] Test OTP for ${req.email}: ${otp}`);
   const emailSent = await sendOTPEmail(req.email, otp);
-  const msg = emailSent ? '2FA সক্রিয় হয়েছে। OTP আপনার Gmail-এ পাঠানো হয়েছে।' : '2FA সক্রিয় হয়েছে। OTP: ' + otp;
+  const msg = emailSent ? '2FA সক্রিয়। OTP Gmail-এ পাঠানো হয়েছে।' : '2FA সক্রিয়। OTP: ' + otp;
   res.json({ ok: true, message: msg });
 });
 app.post('/api/2fa/disable', authMiddleware, (req, res) => {
   const u = users[req.email]; if (!u) return res.status(404).json({ error: 'Not found' });
   u.twoFactorEnabled = false; saveUsers(users);
-  res.json({ ok: true, message: '2FA নিষ্ক্রিয় হয়েছে।' });
+  res.json({ ok: true, message: '2FA নিষ্ক্রিয়।' });
 });
 
-// 3) পাসওয়ার্ড বদল (লগইন থাকা অবস্থায়)
+// Password change
 app.post('/api/change-password', authMiddleware, (req, res) => {
   const { oldPassword, newPassword } = req.body;
-  if (!newPassword || newPassword.length < 6) return res.status(400).json({ error: 'নতুন পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।' });
+  if (!newPassword || newPassword.length < 6) return res.status(400).json({ error: 'নতুন পাসওয়ার্ড ৬+ অক্ষর হতে হবে।' });
   const u = users[req.email];
   if (!bcrypt.compareSync(String(oldPassword || ''), u.hash)) return res.status(401).json({ error: 'পুরনো পাসওয়ার্ড ভুল।' });
   u.hash = bcrypt.hashSync(String(newPassword), 10);
@@ -267,16 +308,20 @@ app.post('/api/change-password', authMiddleware, (req, res) => {
   res.json({ ok: true, message: 'পাসওয়ার্ড বদলে গেছে।' });
 });
 
-// 4) অ্যাডমিন — ৩০ জন ইউজার ম্যানেজমেন্ট
+// File upload
+app.post('/api/upload', authMiddleware, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'ফাইল পাওয়া যায়নি।' });
+  const url = '/uploads/' + req.file.filename;
+  res.json({ url, fileName: req.file.originalname, mimeType: req.file.mimetype, size: req.file.size });
+});
+
+// Admin
 app.get('/api/admin/users', authMiddleware, adminMiddleware, (req, res) => {
   res.json({
-    max: MAX_USERS,
-    count: ALLOWED_EMAILS.length,
-    admin: ADMIN_EMAIL,
+    max: MAX_USERS, count: ALLOWED_EMAILS.length, admin: ADMIN_EMAIL,
     users: ALLOWED_EMAILS.map(e => ({
       email: e, name: (users[e] || {}).displayName || (users[e] || {}).name || e.split('@')[0],
-      avatar: (users[e] || {}).avatar || null,
-      regCode: (users[e] || {}).regCode || null,
+      avatar: (users[e] || {}).avatar || null, regCode: (users[e] || {}).regCode || null,
       online: onlineMap.has(e), createdAt: (users[e] || {}).createdAt || null
     }))
   });
@@ -285,26 +330,24 @@ app.post('/api/admin/add-user', authMiddleware, adminMiddleware, (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const password = String(req.body.password || '');
   const name = String(req.body.name || '').trim() || email.split('@')[0];
-  if (!email.endsWith('@gmail.com')) return res.status(400).json({ error: 'শুধু Gmail (@gmail.com) যোগ করা যাবে।' });
-  if (!email.includes('@') || email.length < 10) return res.status(400).json({ error: 'সঠিক Gmail দিন।' });
+  if (!email.endsWith('@gmail.com')) return res.status(400).json({ error: 'শুধু Gmail যোগ করা যাবে।' });
+  if (email.length < 10) return res.status(400).json({ error: 'সঠিক Gmail দিন।' });
   if (ALLOWED_EMAILS.includes(email)) return res.status(400).json({ error: 'এই Gmail আগেই আছে।' });
-  if (ALLOWED_EMAILS.length >= MAX_USERS) return res.status(400).json({ error: `সর্বোচ্চ ${MAX_USERS} জন। একজনকে সরিয়ে আবার যোগ করুন।` });
-  if (!password || password.length < 6) return res.status(400).json({ error: 'পাসওয়ার্ড কমপক্ষে ৬ অক্ষর হতে হবে।' });
+  if (ALLOWED_EMAILS.length >= MAX_USERS) return res.status(400).json({ error: `সর্বোচ্চ ${MAX_USERS} জন।` });
+  if (!password || password.length < 6) return res.status(400).json({ error: 'পাসওয়ার্ড ৬+ অক্ষর হতে হবে।' });
   ALLOWED_EMAILS.push(email);
   const regCode = Math.random().toString(36).slice(2, 8).toUpperCase();
   users[email] = { hash: bcrypt.hashSync(password, 10), name: email.split('@')[0], displayName: name, registered: false, regCode, createdAt: Date.now() };
   saveUsers(users); persistAllowedEmails();
-  console.log('Admin added user:', email, '| reg-code:', regCode);
   res.json({ ok: true, message: 'যোগ করা হয়েছে', email, regCode });
 });
 app.post('/api/admin/remove-user', authMiddleware, adminMiddleware, (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   if (email === ADMIN_EMAIL) return res.status(400).json({ error: 'অ্যাডমিন নিজেকে সরাতে পারবে না।' });
-  if (!ALLOWED_EMAILS.includes(email)) return res.status(404).json({ error: 'এই Gmail তালিকায় নেই।' });
+  if (!ALLOWED_EMAILS.includes(email)) return res.status(404).json({ error: 'তালিকায় নেই।' });
   ALLOWED_EMAILS = ALLOWED_EMAILS.filter(e => e !== email);
   delete users[email];
   saveUsers(users); persistAllowedEmails();
-  // force disconnect if online
   const sid = onlineMap.get(email);
   if (sid) { try { io.to(sid).emit('force-logout', { reason: 'আপনাকে তালিকা থেকে সরানো হয়েছে।' }); io.sockets.sockets.get(sid)?.disconnect(true); } catch {} }
   res.json({ ok: true, message: 'সরানো হয়েছে', email });
@@ -319,8 +362,8 @@ app.post('/api/admin/reset-password', authMiddleware, adminMiddleware, (req, res
   res.json({ ok: true, message: 'পাসওয়ার্ড রিসেট হয়েছে' });
 });
 
-// 5) চ্যাট হিস্ট্রি (সাধারণ — ডেমোর জন্য সার্ভার মেমরিতে)
-const messages = []; // {id, from, to(group|email), text, type, replyTo, at, expiresAt}
+// Messages
+const messages = [];
 app.get('/api/messages', authMiddleware, (req, res) => {
   const now = Date.now();
   const visible = messages.filter(m => !m.expiresAt || m.expiresAt > now)
@@ -329,10 +372,13 @@ app.get('/api/messages', authMiddleware, (req, res) => {
   res.json(visible);
 });
 
-// ---- Socket.io (realtime + call signaling) ----
+// ---- Socket.io ----
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 10e6 }); // 10MB for media
-const onlineMap = new Map(); // email -> socketId
+const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 50e6 });
+const onlineMap = new Map();
+
+// Group call rooms: roomId -> Set of emails
+const callRooms = new Map();
 
 io.use((socket, next) => {
   try {
@@ -350,7 +396,7 @@ io.on('connection', (socket) => {
   onlineMap.set(email, socket.id);
   io.emit('presence', { email, online: true, onlineList: [...onlineMap.keys()] });
 
-  // পুরনো মেসেজে টিক আপডেট জানানো
+  // Chat messages
   socket.on('chat:message', (data = {}) => {
     const text = String(data.text || '').slice(0, 2000);
     if (!text.trim() && !data.voice && !data.media) return;
@@ -360,7 +406,7 @@ io.on('connection', (socket) => {
       to: data.to || 'group',
       text, type: data.media ? (data.media.mimeType || 'image').split('/')[0] : data.voice ? 'voice' : 'text',
       voice: data.voice || null,
-      media: data.media || null,         // {dataUrl, mimeType, fileName}
+      media: data.media || null,
       replyTo: data.replyTo || null,
       at: Date.now(),
       expiresAt: data.disappearSec ? Date.now() + data.disappearSec * 1000 : null
@@ -373,14 +419,13 @@ io.on('connection', (socket) => {
       const target = onlineMap.get(msg.to);
       if (target) io.to(target).emit('chat:message', msg);
     }
-    // ডেলিভারি টিক
     socket.emit('chat:ack', { id: msg.id, status: 'sent' });
   });
 
   socket.on('chat:typing', (d = {}) => socket.broadcast.emit('chat:typing', { from: email, to: d.to || 'group', isTyping: !!d.isTyping }));
   socket.on('chat:read', (d = {}) => socket.broadcast.emit('chat:read', { by: email, id: d.id }));
 
-  // --- WebRTC signaling (1-1 voice/video call) ---
+  // ---- 1-1 Call signaling ----
   socket.on('call:invite', (d = {}) => {
     const target = onlineMap.get(d.to);
     if (target) io.to(target).emit('call:invite', { from: email, kind: d.kind || 'video' });
@@ -394,9 +439,59 @@ io.on('connection', (socket) => {
     if (target) io.to(target).emit('call:end', { from: email });
   });
 
+  // ---- Group call signaling ----
+  socket.on('groupcall:join', (d = {}) => {
+    const roomId = d.roomId || 'group';
+    socket.join('call:' + roomId);
+    if (!callRooms.has(roomId)) callRooms.set(roomId, new Set());
+    const room = callRooms.get(roomId);
+    const participants = [...room];
+    room.add(email);
+    console.log(`📞 Group call: ${email} joined room ${roomId} (${room.size} participants)`);
+    // Tell existing participants about the new user
+    for (const p of participants) {
+      const sid = onlineMap.get(p);
+      if (sid) io.to(sid).emit('groupcall:new-peer', { from: email, roomId });
+    }
+    // Tell the new user about existing participants
+    socket.emit('groupcall:peers', { peers: participants, roomId });
+  });
+
+  socket.on('groupcall:signal', (d = {}) => {
+    const target = onlineMap.get(d.to);
+    if (target) io.to(target).emit('groupcall:signal', { from: email, signal: d.signal, roomId: d.roomId });
+  });
+
+  socket.on('groupcall:leave', (d = {}) => {
+    const roomId = d.roomId || 'group';
+    socket.leave('call:' + roomId);
+    const room = callRooms.get(roomId);
+    if (room) {
+      room.delete(email);
+      if (room.size === 0) { callRooms.delete(roomId); console.log(`📞 Room ${roomId} empty — deleted`); }
+      else {
+        for (const p of room) {
+          const sid = onlineMap.get(p);
+          if (sid) io.to(sid).emit('groupcall:peer-left', { from: email, roomId });
+        }
+      }
+    }
+  });
+
   socket.on('disconnect', () => {
     if (onlineMap.get(email) === socket.id) onlineMap.delete(email);
     io.emit('presence', { email, online: false, onlineList: [...onlineMap.keys()] });
+    // Clean up group calls
+    for (const [roomId, room] of callRooms) {
+      if (room.has(email)) {
+        room.delete(email);
+        for (const p of room) {
+          const sid = onlineMap.get(p);
+          if (sid) io.to(sid).emit('groupcall:peer-left', { from: email, roomId });
+        }
+        if (room.size === 0) callRooms.delete(roomId);
+      }
+    }
   });
 });
 

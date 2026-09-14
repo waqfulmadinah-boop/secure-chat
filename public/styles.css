@@ -134,3 +134,9 @@ body.purple .bubble.me{background:#4a148c}
 .media-preview-bar .remove-media{position:absolute;top:0;left:0;background:#ff3b30;border:none;color:#fff;border-radius:50%;width:20px;height:20px;cursor:pointer;font-size:12px}
 
 @media(max-width:700px){.sidebar{width:70px}.me div,#search,.chat-item div,.side-foot{display:none}.chat-item{justify-content:center;padding:10px 4px}.side-actions button{font-size:16px}}
+
+/* Group video grid */
+.group-video-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;flex:1;overflow:auto;padding:8px}
+.group-video-item{position:relative;border-radius:12px;overflow:hidden;background:#000;min-height:150px}
+.group-video-item video{width:100%;height:100%;object-fit:cover;border-radius:12px}
+.group-video-label{position:absolute;bottom:0;left:0;right:0;padding:6px 10px;background:linear-gradient(transparent,#000a);color:#fff;font-size:13px;font-weight:600}
