@@ -98,11 +98,30 @@
   </main>
 </div>
 
-<!-- Settings modal (2FA + Theme) -->
+<!-- Settings modal (Profile + 2FA + Theme) -->
 <div id="settingsModal" class="modal hidden">
-  <div class="modal-card" style="min-width:380px">
+  <div class="modal-card" style="min-width:380px;max-height:90vh;overflow:auto">
     <h3>⚙️ সেটিংস</h3>
     <div style="text-align:left">
+      <h4>👤 প্রোফাইল</h4>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <div id="profileAvatarPreview" style="width:60px;height:60px;border-radius:50%;background:#00a884;display:flex;align-items:center;justify-content:center;font-size:24px;color:#fff;overflow:hidden;cursor:pointer" title="ছবি পরিবর্তন করুন">—</div>
+        <div>
+          <input id="profileAvatarInput" type="file" accept="image/*" class="hidden">
+          <button id="changeAvatarBtn" style="font-size:13px;padding:6px 12px">📸 ছবি পরিবর্তন</button>
+          <button id="removeAvatarBtn" style="font-size:13px;padding:6px 12px;background:#ff3b30">🗑️ মুছুন</button>
+        </div>
+      </div>
+      <input id="profileNameInput" placeholder="আপনার ডিসপ্লে নাম" style="width:100%">
+      <button id="saveProfile" style="width:100%">💾 প্রোফাইল সেভ</button>
+      <p id="profileMsg" style="min-height:16px;color:#ffd60a"></p>
+      <hr style="border-color:#2a3942;margin:12px 0">
+      <h4>🔑 পাসওয়ার্ড পরিবর্তন</h4>
+      <input id="oldPassInput" type="password" placeholder="পুরনো পাসওয়ার্ড" style="width:100%">
+      <input id="newPassInput" type="password" placeholder="নতুন পাসওয়ার্ড (৬+)" style="width:100%">
+      <button id="changePassBtn" style="width:100%">🔑 পাসওয়ার্ড বদলান</button>
+      <p id="passMsg" style="min-height:16px;color:#ffd60a"></p>
+      <hr style="border-color:#2a3942;margin:12px 0">
       <h4>🔐 দুই-ধাপে প্রমাণীকরণ (2FA)</h4>
       <p id="twofaStatus">—</p>
       <button id="toggle2FA">2FA চালু/বন্ধ করুন</button>

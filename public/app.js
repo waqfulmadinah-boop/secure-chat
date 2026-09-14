@@ -73,14 +73,14 @@ const ADMIN_EMAIL = 'waqfulmadinah@gmail.com';
 async function enterApp() {
   $('loginScreen').classList.add('hidden');
   $('app').classList.remove('hidden');
-  $('meName').textContent = me.name; $('meEmail').textContent = me.email;
-  $('meAvatar').textContent = me.name[0].toUpperCase();
+  $('meName').textContent = me.displayName || me.name; $('meEmail').textContent = me.email;
+  if (me.avatar) { $('meAvatar').innerHTML = `<img src="${me.avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`; }
+  else { $('meAvatar').textContent = (me.displayName || me.name || 'U')[0].toUpperCase(); }
   if (me.email.toLowerCase() === ADMIN_EMAIL) $('adminBtn').classList.remove('hidden');
   connectSocket();
   renderChatList();
   const msgs = await api('/api/messages').catch(() => []);
   msgs.forEach(addMsg);
-  // অ্যাডমিন হলে ইউজার লিস্ট তাজা করো
   if (me.email.toLowerCase() === ADMIN_EMAIL) refreshAdminList().catch(()=>{});
 }
 
@@ -92,7 +92,8 @@ function connectSocket() {
   socket.on('chat:message', (m) => { if (m.to === 'group' || m.from === me.email || m.to === me.email) addMsg(m); });
   socket.on('chat:typing', (d) => {
     if (d.from === me.email) return;
-    $('typingLine').textContent = d.isTyping ? '✍️ ' + d.from + ' লিখছে...' : '';
+    const fromName = (users.find(u=>u.email===d.from)||{}).name || d.from.split('@')[0];
+    $('typingLine').textContent = d.isTyping ? '✍️ ' + fromName + ' লিখছে...' : '';
     if (d.isTyping) setTimeout(() => $('typingLine').textContent = '', 2500);
   });
   socket.on('presence', (d) => { updatePresence(d.onlineList || []); });
@@ -116,9 +117,15 @@ function renderChatList() {
   const others = [...new Set([...users.map(u => u.email), ...guessPeers()])].filter(e => e !== me.email);
   others.forEach(email => {
     const el = document.createElement('div');
+    const peer = (adminCache?.users || []).find(u => u.email === email) || {};
+    const avatar = peer.avatar;
+    const displayName = peer.name || email.split('@')[0];
     el.className = 'chat-item' + (currentPeer === email ? ' active' : '');
     el.id = 'peer-' + email;
-    el.innerHTML = `<span class="avatar">${email[0].toUpperCase()}</span><div><b>${email.split('@')[0]}</b><br><small>${email}</small></div><span class="dot" id="dot-${email}"></span>`;
+    const avatarHtml = avatar
+      ? `<img src="${avatar}" style="width:40px;height:40px;border-radius:50%;object-fit:cover">`
+      : `<span class="avatar">${displayName[0].toUpperCase()}</span>`;
+    el.innerHTML = `${avatarHtml}<div><b>${escapeHtml(displayName)}</b><br><small>${escapeHtml(email)}</small></div><span class="dot" id="dot-${CSS.escape(email)}"></span>`;
     el.onclick = () => switchPeer(email);
     box.appendChild(el);
   });
@@ -158,14 +165,26 @@ function updatePresence(list) {
 }
 
 // ---- Messages ----
+function getUserInfo(email) {
+  const u = users.find(x => x.email === email) || adminCache?.users?.find(x => x.email === email) || {};
+  return { displayName: u.name || email.split('@')[0], avatar: u.avatar || null };
+}
 function addMsg(m) {
   if (m.expiresAt && m.expiresAt < Date.now()) return;
   const mine = m.from === me.email;
+  const info = getUserInfo(m.from);
   const div = document.createElement('div');
   div.className = 'bubble' + (mine ? ' me' : '');
   const time = new Date(m.at).toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' });
   let inner = '';
   if (m.replyTo) inner += `<div class="reply">↩️ ${escapeHtml(m.replyTo)}</div>`;
+  // Sender info (not for own messages, not for group where sender is obvious)
+  if (!mine) {
+    const avatarHtml = info.avatar
+      ? `<img src="${info.avatar}" style="width:24px;height:24px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:4px">`
+      : `<span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#00a884;color:#fff;font-size:11px;font-weight:800;vertical-align:middle;margin-right:4px">${info.displayName[0].toUpperCase()}</span>`;
+    inner += `<div style="font-size:12px;font-weight:700;color:#00e676;margin-bottom:2px">${avatarHtml} ${escapeHtml(info.displayName)}</div>`;
+  }
   // Media display
   if (m.media) {
     const mt = m.media.mimeType || '';
@@ -179,7 +198,7 @@ function addMsg(m) {
   } else {
     inner += escapeHtml(m.text);
   }
-  inner += `<div class="meta">${mine ? '' : escapeHtml(m.from.split('@')[0]) + ' • '}${time} ${mine ? '<span class="tick">✓✓</span>' : ''}</div>`;
+  inner += `<div class="meta">${time} ${mine ? '<span class="tick">✓✓</span>' : ''}</div>`;
   div.innerHTML = inner;
   div.ondblclick = () => { replyTo = m.text || 'মেসেজ'; $('replyText').textContent = replyTo.slice(0, 60); $('replyBar').classList.remove('hidden'); };
   div.oncontextmenu = (e) => { e.preventDefault(); const r = prompt('রিয়্যাকশন দিন (❤️ 👍 😂 😮 😢):', '❤️'); if (r) div.innerHTML += ' ' + r; };
@@ -352,16 +371,50 @@ send = function() {
   $('replyBar').classList.add('hidden');
 };
 
-// ---- Settings (2FA + Theme) ----
+// ---- Settings (Profile + 2FA + Theme) ----
 $('settingsBtn').onclick = async () => {
   $('settingsModal').classList.remove('hidden');
-  try {
-    const j = await api('/api/me');
-    // check 2FA status from last login
-    $('twofaStatus').textContent = 'বর্তমান স্ট্যাটাস: ' + (me.twofaEnabled ? '✅ চালু' : '❌ বন্ধ');
-  } catch {}
+  $('profileNameInput').value = me.displayName || me.name || '';
+  if (me.avatar) { $('profileAvatarPreview').innerHTML = `<img src="${me.avatar}" style="width:100%;height:100%;object-fit:cover">`; }
+  else { $('profileAvatarPreview').textContent = (me.displayName || me.name || 'U')[0].toUpperCase(); }
+  $('twofaStatus').textContent = 'বর্তমান স্ট্যাটাস: ' + (me.twofaEnabled ? '✅ চালু' : '❌ বন্ধ');
 };
 $('settingsClose').onclick = () => $('settingsModal').classList.add('hidden');
+// Profile avatar
+let pendingAvatar = null;
+$('changeAvatarBtn').onclick = () => $('profileAvatarInput').click();
+$('profileAvatarInput').onchange = (e) => {
+  const file = e.target.files[0]; if (!file) return;
+  const rd = new FileReader();
+  rd.onload = () => { pendingAvatar = rd.result; $('profileAvatarPreview').innerHTML = `<img src="${pendingAvatar}" style="width:100%;height:100%;object-fit:cover">`; };
+  rd.readAsDataURL(file);
+};
+$('removeAvatarBtn').onclick = () => { pendingAvatar = ''; $('profileAvatarPreview').textContent = (me.displayName || 'U')[0].toUpperCase(); };
+// Save profile
+$('saveProfile').onclick = async () => {
+  $('profileMsg').textContent = 'সেভ হচ্ছে...';
+  try {
+    const body = { displayName: $('profileNameInput').value.trim() };
+    if (pendingAvatar !== null) body.avatar = pendingAvatar;
+    const j = await api('/api/profile/update', { method: 'POST', body: JSON.stringify(body) });
+    me.displayName = j.displayName; me.avatar = j.avatar;
+    if (j.avatar) { $('meAvatar').innerHTML = `<img src="${j.avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`; }
+    else { $('meAvatar').textContent = (j.displayName || 'U')[0].toUpperCase(); }
+    $('meName').textContent = j.displayName;
+    pendingAvatar = null;
+    $('profileMsg').textContent = '✅ প্রোফাইল সেভ হয়েছে';
+    renderChatList();
+  } catch (e) { $('profileMsg').textContent = '⛔ ' + e.message; }
+};
+// Change password
+$('changePassBtn').onclick = async () => {
+  $('passMsg').textContent = '';
+  try {
+    await api('/api/profile/update', { method: 'POST', body: JSON.stringify({ oldPassword: $('oldPassInput').value, newPassword: $('newPassInput').value }) });
+    $('passMsg').textContent = '✅ পাসওয়ার্ড বদলে গেছে'; $('oldPassInput').value = ''; $('newPassInput').value = '';
+  } catch (e) { $('passMsg').textContent = '⛔ ' + e.message; }
+};
+// 2FA
 $('toggle2FA').onclick = async () => {
   try {
     const j = await api('/api/2fa/enable', { method: 'POST', body: '{}' });
