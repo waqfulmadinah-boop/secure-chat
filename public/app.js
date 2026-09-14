@@ -39,7 +39,7 @@ async function doLogin() {
     if (j.require2FA) {
       loginEmail = email;
       const otpSec = $('otpSection'); if (otpSec) otpSec.classList.remove('hidden');
-      if (errEl) errEl.textContent = '📱 OTP আপনার কনসোল/সার্ভার লগে দেখুন।';
+      if (errEl) errEl.textContent = '📱 ' + (j.hint || 'OTP পাঠানো হয়েছে।');
       if (btnEl) btnEl.textContent = 'প্রবেশ করুন';
       return;
     }

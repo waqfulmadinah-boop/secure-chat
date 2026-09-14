@@ -13,10 +13,46 @@ const { Server } = require('socket.io');
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me';
+const GMAIL_USER = process.env.GMAIL_USER || '';   // e.g. waqfulmadinah@gmail.com
+const GMAIL_PASS = process.env.GMAIL_PASS || '';   // Gmail App Password (16 chars)
 let ALLOWED_EMAILS = (process.env.ALLOWED_EMAILS || '')
   .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-const ADMIN_EMAIL = 'waqfulmadinah@gmail.com'; // প্রধান অ্যাডমিন (৩০ জন ম্যানেজ করবে)
+const ADMIN_EMAIL = 'waqfulmadinah@gmail.com';
 const MAX_USERS = 30;
+
+// ---- Email transporter (Gmail SMTP) ----
+let transporter = null;
+if (GMAIL_USER && GMAIL_PASS) {
+  const nodemailer = require('nodemailer');
+  transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user: GMAIL_USER, pass: GMAIL_PASS }
+  });
+  console.log('✅ Email transporter ready:', GMAIL_USER);
+} else {
+  console.log('⚠️ GMAIL_USER/GMAIL_PASS not set — OTP will only appear in server console');
+}
+async function sendOTPEmail(to, otp) {
+  if (!transporter) return false;
+  try {
+    await transporter.sendMail({
+      from: `"Secure Chat" <${GMAIL_USER}>`,
+      to,
+      subject: '🔐 Secure Chat — আপনার OTP কোড',
+      html: `<div style="font-family:sans-serif;max-width:400px;margin:auto;padding:20px;background:#111b21;color:#e9edef;border-radius:12px">
+        <h2 style="color:#00a884;text-align:center">🔐 Secure Chat OTP</h2>
+        <p>আপনার ৬ ডিজিট verification code:</p>
+        <div style="text-align:center;font-size:32px;font-weight:bold;letter-spacing:8px;color:#00e676;padding:16px;background:#202c33;border-radius:8px">${otp}</div>
+        <p style="color:#8696a0;font-size:12px">এই কোড ৫ মিনিটের জন্য বৈধ। যদি আপনি লগইন করেন না, এই মেইল উপেক্ষা করুন।</p>
+      </div>`
+    });
+    console.log(`📧 OTP sent to ${to}`);
+    return true;
+  } catch (e) {
+    console.error('❌ Email send failed:', e.message);
+    return false;
+  }
+}
 
 const USERS_FILE = path.join(__dirname, 'users.json');
 const ENV_FILE = path.join(__dirname, '.env');
@@ -136,7 +172,12 @@ app.post('/api/login', loginLimiter, (req, res) => {
     const otp = generateOTP();
     otpStore.set(email, { otp, expiresAt: Date.now() + 5 * 60 * 1000 });
     console.log(`[2FA] OTP for ${email}: ${otp}`);
-    return res.json({ require2FA: true, email, hint: `OTP আপনার কনসোলে: ${otp}` });
+    // Send OTP via email
+    const emailSent = await sendOTPEmail(email, otp);
+    const hint = emailSent
+      ? `OTP আপনার Gmail-এ পাঠানো হয়েছে: ${email}`
+      : `OTP সার্ভার কনসোলে: ${otp}`;
+    return res.json({ require2FA: true, email, hint, emailSent });
   }
 
   const token = signToken(email);
@@ -200,12 +241,14 @@ app.get('/api/profile/:email', authMiddleware, (req, res) => {
 });
 
 // 1c) 2FA enable/disable
-app.post('/api/2fa/enable', authMiddleware, (req, res) => {
+app.post('/api/2fa/enable', authMiddleware, async (req, res) => {
   const u = users[req.email]; if (!u) return res.status(404).json({ error: 'Not found' });
   u.twoFactorEnabled = true; saveUsers(users);
   const otp = generateOTP(); otpStore.set(req.email, { otp, expiresAt: Date.now() + 5 * 60 * 1000 });
   console.log(`[2FA] Test OTP for ${req.email}: ${otp}`);
-  res.json({ ok: true, message: '2FA সক্রিয় হয়েছে। OTP: ' + otp });
+  const emailSent = await sendOTPEmail(req.email, otp);
+  const msg = emailSent ? '2FA সক্রিয় হয়েছে। OTP আপনার Gmail-এ পাঠানো হয়েছে।' : '2FA সক্রিয় হয়েছে। OTP: ' + otp;
+  res.json({ ok: true, message: msg });
 });
 app.post('/api/2fa/disable', authMiddleware, (req, res) => {
   const u = users[req.email]; if (!u) return res.status(404).json({ error: 'Not found' });
