@@ -5,6 +5,7 @@ let token = '';
 let me = null, socket = null, users = [], currentPeer = 'group';
 let replyTo = null, statuses = JSON.parse(localStorage.getItem('sc_status') || '[]');
 let pendingMedia = [];
+let profileMap = {};
 
 async function api(path, opts = {}) {
   const r = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(opts.headers || {}) } });
@@ -14,7 +15,7 @@ async function api(path, opts = {}) {
 }
 function escapeHtml(s) { return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
-// ---- Show/Hide password ----
+// ---- Password toggle ----
 function bindToggle(btnId, inputId) {
   const b = $(btnId), inp = $(inputId);
   if (!b || !inp) return;
@@ -84,19 +85,16 @@ async function enterApp() {
   }
   connectSocket();
   renderChatList();
-  // Fetch all profiles for chat identity
+  // Fetch profiles first so sender names show correctly
   await fetchProfiles();
   const msgs = await api('/api/messages').catch(() => []);
   msgs.forEach(addMsg);
   if (me && me.email && me.email.toLowerCase() === ADMIN_EMAIL) refreshAdminList().catch(() => {});
 }
-let profileMap = {};
 async function fetchProfiles() {
   try {
-    const p = await api('/api/profiles');
-    profileMap = p;
-    // Merge into users array
-    users = users.map(u => ({ ...u, name: (p[u.email] || {}).name || u.name, avatar: (p[u.email] || {}).avatar || u.avatar }));
+    profileMap = await api('/api/profiles');
+    users = users.map(u => ({ ...u, name: (profileMap[u.email] || {}).name || u.name, avatar: (profileMap[u.email] || {}).avatar || u.avatar }));
   } catch {}
 }
 
@@ -133,8 +131,9 @@ function renderChatList() {
   others.forEach(email => {
     const el = document.createElement('div');
     const peer = (adminCache?.users || []).find(u => u.email === email) || {};
-    const avatar = peer.avatar;
-    const displayName = peer.name || email.split('@')[0];
+    const prof = profileMap[email] || {};
+    const avatar = prof.avatar || peer.avatar;
+    const displayName = prof.name || peer.name || email.split('@')[0];
     el.className = 'chat-item' + (currentPeer === email ? ' active' : '');
     el.id = 'peer-' + email;
     const avatarHtml = avatar
@@ -170,11 +169,14 @@ function switchPeer(p) {
   const rb = $('replyBar'); if (rb) rb.classList.add('hidden');
   document.querySelectorAll('.chat-item').forEach(x => x.classList.remove('active'));
   const peerInfo = (adminCache?.users || []).find(u => u.email === p) || {};
-  const pn = $('peerName'); if (pn) pn.textContent = p === 'group' ? 'গ্রুপ চ্যাট' : (peerInfo.name || p.split('@')[0]);
+  const prof = profileMap[p] || {};
+  const displayName = prof.name || peerInfo.name || p.split('@')[0];
+  const avatar = prof.avatar || peerInfo.avatar;
+  const pn = $('peerName'); if (pn) pn.textContent = p === 'group' ? 'গ্রুপ চ্যাট' : displayName;
   const pa = $('peerAvatar');
   if (pa) {
-    if (peerInfo.avatar) pa.innerHTML = '<img src="' + peerInfo.avatar + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover">';
-    else pa.textContent = (p === 'group' ? 'G' : (peerInfo.name || p)[0]).toUpperCase();
+    if (avatar) pa.innerHTML = '<img src="' + avatar + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover">';
+    else pa.textContent = (p === 'group' ? 'G' : displayName[0]).toUpperCase();
   }
   const msgBox = $('messages'); if (msgBox) msgBox.innerHTML = '';
   api('/api/messages').then(ms => ms.filter(m => p === 'group' ? m.to === 'group' : (m.from === p && m.to === me.email) || (m.from === me.email && m.to === p)).forEach(addMsg));
@@ -201,12 +203,14 @@ function addMsg(m) {
   const time = new Date(m.at).toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' });
   let inner = '';
   if (m.replyTo) inner += '<div class="reply">↩️ ' + escapeHtml(m.replyTo) + '</div>';
+  // Sender info for others' messages — name + avatar
   if (!mine) {
     const avatarHtml = info.avatar
-      ? '<img src="' + info.avatar + '" style="width:24px;height:24px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:4px">'
-      : '<span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#00a884;color:#fff;font-size:11px;font-weight:800;vertical-align:middle;margin-right:4px">' + info.displayName[0].toUpperCase() + '</span>';
-    inner += '<div style="font-size:12px;font-weight:700;color:#00e676;margin-bottom:2px">' + avatarHtml + ' ' + escapeHtml(info.displayName) + '</div>';
+      ? '<img src="' + info.avatar + '" class="sender-avatar">'
+      : '<span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#00a884;color:#fff;font-size:10px;font-weight:800">' + info.displayName[0].toUpperCase() + '</span>';
+    inner += '<div class="sender-name">' + avatarHtml + ' ' + escapeHtml(info.displayName) + '</div>';
   }
+  // Media
   if (m.media) {
     const mt = m.media.mimeType || '';
     if (mt.startsWith('image/')) inner += '<img class="media-preview" src="' + m.media.dataUrl + '" onclick="window.open(\'' + m.media.dataUrl + '\',\'_blank\')">';
@@ -357,6 +361,11 @@ function endCallUI() {
 }
 
 // ---- Media Upload ----
+// Use BOTH label-for AND direct onclick for maximum compatibility
+safeBind('mediaBtn', 'onclick', (e) => {
+  e.preventDefault();
+  const inp = $('mediaInput'); if (inp) inp.click();
+});
 safeBind('mediaInput', 'onchange', async (e) => {
   for (const file of e.target.files) {
     const rd = new FileReader();
@@ -424,7 +433,6 @@ safeBind('saveProfile', 'onclick', async () => {
     pendingAvatar = null; avatarRemoved = false;
     if (pm) pm.textContent = '✅ প্রোফাইল সেভ হয়েছে';
     renderChatList();
-    fetchProfiles(); // refresh all profiles
   } catch (e) { if (pm) pm.textContent = '⛔ ' + e.message; }
 });
 
