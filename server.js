@@ -181,6 +181,16 @@ app.post('/api/profile/update', authMiddleware, (req, res) => {
   res.json({ ok: true, displayName: u.displayName, avatar: u.avatar || null });
 });
 
+// 2d) সব ইউজারের প্রোফাইল (চ্যাটে নাম+ছবি দেখাতে)
+app.get('/api/profiles', authMiddleware, (req, res) => {
+  const profiles = {};
+  for (const email of ALLOWED_EMAILS) {
+    const u = users[email] || {};
+    profiles[email] = { email, name: u.displayName || u.name || email.split('@')[0], avatar: u.avatar || null };
+  }
+  res.json(profiles);
+});
+
 // 2c) অন্যদের প্রোফাইল দেখা
 app.get('/api/profile/:email', authMiddleware, (req, res) => {
   const email = req.params.email.toLowerCase();

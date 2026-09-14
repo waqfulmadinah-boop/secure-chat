@@ -84,9 +84,20 @@ async function enterApp() {
   }
   connectSocket();
   renderChatList();
+  // Fetch all profiles for chat identity
+  await fetchProfiles();
   const msgs = await api('/api/messages').catch(() => []);
   msgs.forEach(addMsg);
   if (me && me.email && me.email.toLowerCase() === ADMIN_EMAIL) refreshAdminList().catch(() => {});
+}
+let profileMap = {};
+async function fetchProfiles() {
+  try {
+    const p = await api('/api/profiles');
+    profileMap = p;
+    // Merge into users array
+    users = users.map(u => ({ ...u, name: (p[u.email] || {}).name || u.name, avatar: (p[u.email] || {}).avatar || u.avatar }));
+  } catch {}
 }
 
 // ---- Socket ----
@@ -178,7 +189,8 @@ function updatePresence(list) {
 // ---- Messages ----
 function getUserInfo(email) {
   const u = users.find(x => x.email === email) || adminCache?.users?.find(x => x.email === email) || {};
-  return { displayName: u.name || email.split('@')[0], avatar: u.avatar || null };
+  const p = profileMap[email] || {};
+  return { displayName: p.name || u.name || email.split('@')[0], avatar: p.avatar || u.avatar || null };
 }
 function addMsg(m) {
   if (m.expiresAt && m.expiresAt < Date.now()) return;
@@ -412,6 +424,7 @@ safeBind('saveProfile', 'onclick', async () => {
     pendingAvatar = null; avatarRemoved = false;
     if (pm) pm.textContent = '✅ প্রোফাইল সেভ হয়েছে';
     renderChatList();
+    fetchProfiles(); // refresh all profiles
   } catch (e) { if (pm) pm.textContent = '⛔ ' + e.message; }
 });
 
