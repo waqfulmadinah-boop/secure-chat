@@ -1,4 +1,4 @@
-// ===== Secure Chat Frontend =====
+// ===== Madani IT Frontend =====
 const $ = (id) => document.getElementById(id);
 function safeBind(id, evt, fn) { const el = $(id); if (el) el[evt] = fn; }
 let token = '';

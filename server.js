@@ -1,4 +1,4 @@
-// Secure Chat Server — নির্দিষ্ট Gmail + Password ছাড়া প্রবেশ অসম্ভব
+// Madani IT Server — নির্দিষ্ট Gmail + Password ছাড়া প্রবেশ অসম্ভব
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
@@ -36,11 +36,11 @@ async function sendOTPEmail(to, otp) {
   if (!transporter) return false;
   try {
     await transporter.sendMail({
-      from: `"Secure Chat" <${GMAIL_USER}>`,
+      from: `"Madani IT" <${GMAIL_USER}>`,
       to,
-      subject: '🔐 Secure Chat — আপনার OTP কোড',
+      subject: '🔐 Madani IT — আপনার OTP কোড',
       html: `<div style="font-family:sans-serif;max-width:400px;margin:auto;padding:20px;background:#111b21;color:#e9edef;border-radius:12px">
-        <h2 style="color:#00a884;text-align:center">🔐 Secure Chat OTP</h2>
+        <h2 style="color:#00a884;text-align:center">🔐 Madani IT OTP</h2>
         <p>আপনার ৬ ডিজিট verification code:</p>
         <div style="text-align:center;font-size:32px;font-weight:bold;letter-spacing:8px;color:#00e676;padding:16px;background:#202c33;border-radius:8px">${otp}</div>
         <p style="color:#8696a0;font-size:12px">এই কোড ৫ মিনিটের জন্য বৈধ। যদি আপনি লগইন করেন না, এই মেইল উপেক্ষা করুন।</p>
@@ -400,4 +400,4 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(PORT, () => console.log(`Secure Chat চলছে: http://localhost:${PORT}`));
+server.listen(PORT, () => console.log(`Madani IT চলছে: http://localhost:${PORT}`));
