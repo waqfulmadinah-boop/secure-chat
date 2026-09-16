@@ -140,7 +140,22 @@ function connectSocket() {
   socket.on('call:invite', (d) => {
     showIncomingCall(d.from, d.kind);
   });
-  socket.on('call:signal', async (d) => { if (pc) try { await pc.setRemoteDescription(d.signal); } catch {} });
+  socket.on('call:signal', async (d) => {
+    if (!pc) { console.log('call:signal received but no pc'); return; }
+    try {
+      const s = d.signal;
+      if (s && s.type === 'offer') {
+        await pc.setRemoteDescription(s);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('call:signal', { to: d.from, signal: pc.localDescription });
+      } else if (s && s.type === 'answer') {
+        await pc.setRemoteDescription(s);
+      } else if (s && s.candidate) {
+        await pc.addIceCandidate(s);
+      }
+    } catch (e) { console.error('signal error', e); }
+  });
   socket.on('call:end', () => {
     endCallUI();
     rejectIncomingCall();
