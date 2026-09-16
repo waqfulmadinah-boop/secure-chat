@@ -198,9 +198,12 @@
   </div>
 </div>
 
+<!-- Hidden audio for call remote stream -->
+<audio id="remoteAudio" autoplay playsinline style="display:none"></audio>
+
 <!-- 1-1 Call modal -->
 <div id="callModal" class="modal hidden">
-  <div class="call-screen">
+  <div class="call-screen" id="callScreen">
     <video id="remoteVideoBg" class="remote-video-bg" autoplay playsinline></video>
     <div class="call-top-bar">
       <span class="call-encrypted">🔒 End-to-end encrypted</span>

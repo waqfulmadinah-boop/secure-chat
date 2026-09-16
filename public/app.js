@@ -304,24 +304,49 @@ function addMsg(m) {
     };
   }
   div.ondblclick = () => { replyTo = m.text || 'মেসেজ'; const rt = $('replyText'); if (rt) rt.textContent = replyTo.slice(0, 60); const rb = $('replyBar'); if (rb) rb.classList.remove('hidden'); };
-  div.oncontextmenu = (e) => { e.preventDefault(); const r = prompt('রিয়্যাকশন (❤️ 👍 😂 😮 😢):', '❤️'); if (r) div.innerHTML += ' ' + r; };
+  div.oncontextmenu = (e) => { e.preventDefault(); showMsgMenu(e, m); };
   const msgBox = $('messages'); if (msgBox) { msgBox.appendChild(div); msgBox.scrollTop = 99999; }
   if (!mine) socket?.emit('chat:read', { id: m.id });
   if (m.expiresAt) setTimeout(() => div.remove(), m.expiresAt - Date.now());
 }
 
-// ---- Message context menu (edit/delete) ----
+// ---- Message context menu (edit/delete/reaction) ----
 function removeMsgMenu() { const old = document.querySelector('.msg-menu'); if (old) old.remove(); }
 function showMsgMenu(e, m) {
   removeMsgMenu();
+  const mine = m.from === me.email;
   const menu = document.createElement('div');
   menu.className = 'msg-menu';
-  menu.innerHTML = '<div class="msg-menu-item" data-action="edit">✏️ Edit</div><div class="msg-menu-item delete" data-action="delete">🗑️ Delete</div>';
-  menu.style.left = Math.min(e.clientX, window.innerWidth - 160) + 'px';
-  menu.style.top = Math.min(e.clientY, window.innerHeight - 80) + 'px';
+  let html = '';
+  if (mine && m.type !== 'call') html += '<div class="msg-menu-item" data-action="edit">✏️ Edit</div>';
+  if (mine && m.type !== 'call') html += '<div class="msg-menu-item delete" data-action="delete">🗑️ Delete</div>';
+  html += '<div class="msg-menu-item" data-action="react">❤️ React</div>';
+  html += '<div class="msg-menu-item" data-action="reply">↩️ Reply</div>';
+  html += '<div class="msg-menu-item" data-action="copy">📋 Copy</div>';
+  menu.innerHTML = html;
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 180) + 'px';
+  menu.style.top = Math.min(e.clientY, window.innerHeight - 160) + 'px';
   document.body.appendChild(menu);
-  menu.querySelector('[data-action="edit"]').onclick = () => { removeMsgMenu(); editMessage(m); };
-  menu.querySelector('[data-action="delete"]').onclick = () => { removeMsgMenu(); deleteMessage(m); };
+  menu.querySelector('[data-action="edit"]')?.addEventListener('click', () => { removeMsgMenu(); editMessage(m); });
+  menu.querySelector('[data-action="delete"]')?.addEventListener('click', () => { removeMsgMenu(); deleteMessage(m); });
+  menu.querySelector('[data-action="react"]')?.addEventListener('click', () => {
+    removeMsgMenu();
+    const r = prompt('রিয়্যাকশন দিন (❤️ 👍 😂 😮 😢):', '❤️');
+    if (r) {
+      const el = document.querySelector('[data-msg-id="' + m.id + '"]');
+      if (el) el.innerHTML += ' <span class="reaction">' + escapeHtml(r) + '</span>';
+    }
+  });
+  menu.querySelector('[data-action="reply"]')?.addEventListener('click', () => {
+    removeMsgMenu();
+    replyTo = m.text || 'মেসেজ';
+    const rt = $('replyText'); if (rt) rt.textContent = replyTo.slice(0, 60);
+    const rb = $('replyBar'); if (rb) rb.classList.remove('hidden');
+  });
+  menu.querySelector('[data-action="copy"]')?.addEventListener('click', () => {
+    removeMsgMenu();
+    navigator.clipboard?.writeText(m.text || '').catch(() => {});
+  });
   setTimeout(() => document.addEventListener('click', removeMsgMenu, { once: true }), 10);
 }
 function editMessage(m) {
@@ -557,15 +582,12 @@ async function acceptCall(from, kind, isCaller) {
   pc.ontrack = (e) => {
     // Remote stream received
     $('callStatus').textContent = '🔊 Connected';
-    // Play remote audio
-    let remoteAudio = $('callModal')?.querySelector('.remote-audio');
-    if (!remoteAudio) {
-      remoteAudio = document.createElement('audio');
-      remoteAudio.className = 'remote-audio';
-      remoteAudio.autoplay = true;
-      $('callModal')?.appendChild(remoteAudio);
+    // Play remote audio — use the static element in HTML
+    const remoteAudio = $('remoteAudio');
+    if (remoteAudio) {
+      remoteAudio.srcObject = e.streams[0];
+      remoteAudio.play().catch(() => {});
     }
-    remoteAudio.srcObject = e.streams[0];
     // Show remote video in background
     const rBg = $('remoteVideoBg');
     if (rBg) {
@@ -606,12 +628,12 @@ safeBind('videoCallBtn', 'onclick', () => { if (currentPeer === 'group') return 
 safeBind('callHang', 'onclick', () => { logCall('completed'); if (callPeer) socket.emit('call:end', { to: callPeer }); endCallUI(); });
 function endCallUI() {
   $('callModal')?.classList.add('hidden');
+  $('callScreen')?.classList.remove('video-active');
   $('callStatus').textContent = 'Calling...';
-  $('remoteVideoBg')?.classList.remove('remote-video-bg');
   try { pc?.close(); localStream?.getTracks().forEach(t => t.stop()); } catch {}
-  // Stop remote audio
+  // Stop remote audio/video
   const rBg = $('remoteVideoBg'); if (rBg) rBg.srcObject = null;
-  const allAudios = $('callModal')?.querySelectorAll('audio'); if (allAudios) allAudios.forEach(a => { a.srcObject = null; a.remove(); });
+  const rAudio = $('remoteAudio'); if (rAudio) rAudio.srcObject = null;
   pc = null; callPeer = null; callMuted = false; callCamOff = false;
 }
 function logCall(status) {
