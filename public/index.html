@@ -198,7 +198,24 @@
     <h3 id="callTitle">📞 কল</h3>
     <div class="videos"><video id="localVideo" muted playsinline></video><video id="remoteVideo" playsinline autoplay></video></div>
     <p id="callStatus">সংযোগ হচ্ছে...</p>
-    <button id="callHang">🔴 কাটো</button>
+    <div class="call-actions">
+      <button id="callMute" class="call-action-btn" title="মিউট">🎤</button>
+      <button id="callCamToggle" class="call-action-btn" title="ক্যাম">📷</button>
+      <button id="callHang" class="call-hang-btn">🔴 কাটো</button>
+    </div>
+  </div>
+</div>
+
+<!-- Incoming Call modal -->
+<div id="incomingCallModal" class="modal hidden">
+  <div class="modal-card incoming-call-card">
+    <div class="incoming-call-avatar" id="incomingCallerAvatar">📞</div>
+    <h3 id="incomingCallerName">—</h3>
+    <p id="incomingCallKind" style="color:#8696a0">ভয়েস কল...</p>
+    <div class="incoming-call-actions">
+      <button id="incomingCallReject" class="call-reject-btn">🔴 কাটো</button>
+      <button id="incomingCallAccept" class="call-accept-btn">🟢 ধরুন</button>
+    </div>
   </div>
 </div>
 

@@ -140,3 +140,22 @@ body.purple .bubble.me{background:#4a148c}
 .group-video-item{position:relative;border-radius:12px;overflow:hidden;background:#000;min-height:150px}
 .group-video-item video{width:100%;height:100%;object-fit:cover;border-radius:12px}
 .group-video-label{position:absolute;bottom:0;left:0;right:0;padding:6px 10px;background:linear-gradient(transparent,#000a);color:#fff;font-size:13px;font-weight:600}
+
+/* Incoming call */
+.incoming-call-card{animation:pulse-ring 1.5s infinite}
+@keyframes pulse-ring{0%{box-shadow:0 0 0 0 #00a88466}70%{box-shadow:0 0 0 20px transparent}100%{box-shadow:0 0 0 0 transparent}}
+.incoming-call-avatar{width:80px;height:80px;border-radius:50%;background:#00a884;display:flex;align-items:center;justify-content:center;font-size:36px;margin:0 auto 12px;animation:bounce 1s infinite}
+@keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+.incoming-call-actions{display:flex;gap:20px;justify-content:center;margin-top:16px}
+.call-accept-btn,.call-reject-btn{width:70px;height:70px;border-radius:50%;border:0;font-size:28px;cursor:pointer;transition:transform .2s}
+.call-accept-btn{background:#00a884;color:#fff;animation:pulse-green 1s infinite}
+.call-reject-btn{background:#ff3b30;color:#fff}
+.call-accept-btn:hover,.call-reject-btn:hover{transform:scale(1.1)}
+@keyframes pulse-green{0%{box-shadow:0 0 0 0 #00a88480}70%{box-shadow:0 0 0 15px transparent}100%{box-shadow:0 0 0 0 transparent}}
+
+/* Call action buttons (during call) */
+.call-actions{display:flex;gap:10px;justify-content:center;margin-top:8px}
+.call-action-btn{width:50px;height:50px;border-radius:50%;border:0;background:#2a3942;color:#fff;font-size:20px;cursor:pointer;transition:all .2s}
+.call-action-btn:hover{background:#3a4952;transform:scale(1.1)}
+.call-action-btn.muted{background:#ff3b30}
+.call-hang-btn{padding:12px 24px;border-radius:25px;border:0;background:#ff3b30;color:#fff;font-size:16px;font-weight:700;cursor:pointer}

@@ -136,11 +136,15 @@ function connectSocket() {
     if (d.isTyping) setTimeout(() => { const tl2 = $('typingLine'); if (tl2) tl2.textContent = ''; }, 2500);
   });
   socket.on('presence', (d) => { updatePresence(d.onlineList || []); });
+  // Incoming call
   socket.on('call:invite', (d) => {
-    if (confirm('📞 ' + d.from + ' (' + d.kind + ' কল) — ধরবেন?')) acceptCall(d.from, d.kind, false);
+    showIncomingCall(d.from, d.kind);
   });
   socket.on('call:signal', async (d) => { if (pc) try { await pc.setRemoteDescription(d.signal); } catch {} });
-  socket.on('call:end', () => endCallUI());
+  socket.on('call:end', () => {
+    endCallUI();
+    rejectIncomingCall();
+  });
 
   // Group call events
   socket.on('groupcall:peers', handleGroupCallPeers);
@@ -385,14 +389,76 @@ window.removeUser = removeUser; window.resetPass = resetPass;
 
 // ---- 1-1 Calls (WebRTC) ----
 let pc = null, localStream = null, callPeer = null;
+let callMuted = false, callCamOff = false;
+let incomingCallFrom = null, incomingCallKind = null;
+let ringtone = null;
+
+function createRingtone() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.frequency.value = 440; osc.type = 'sine';
+    gain.gain.value = 0.3;
+    osc.start();
+    return { osc, ctx, stop: () => { osc.stop(); ctx.close(); } };
+  } catch { return null; }
+}
+
+function showIncomingCall(from, kind) {
+  incomingCallFrom = from;
+  incomingCallKind = kind;
+  $('incomingCallModal')?.classList.remove('hidden');
+  const prof = profileMap[from] || {};
+  const name = prof.name || from.split('@')[0];
+  $('incomingCallerName').textContent = name;
+  $('incomingCallerKind').textContent = kind === 'voice' ? '📞 ভয়েস কল' : '🎥 ভিডিও কল';
+  const av = $('incomingCallerAvatar');
+  if (prof.avatar) av.innerHTML = '<img src="' + prof.avatar + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover">';
+  else av.textContent = name[0].toUpperCase();
+  // Play ringtone
+  ringtone = createRingtone();
+  // Vibrate on mobile
+  if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
+  // Auto-reject after 30 seconds
+  setTimeout(() => { if (incomingCallFrom) rejectIncomingCall(); }, 30000);
+}
+
+function rejectIncomingCall() {
+  if (incomingCallFrom) {
+    socket.emit('call:end', { to: incomingCallFrom });
+    incomingCallFrom = null;
+  }
+  $('incomingCallModal')?.classList.add('hidden');
+  if (ringtone) { try { ringtone.stop(); } catch {} ringtone = null; }
+}
+
+async function acceptIncomingCall() {
+  if (!incomingCallFrom) return;
+  const from = incomingCallFrom;
+  const kind = incomingCallKind;
+  incomingCallFrom = null;
+  $('incomingCallModal')?.classList.add('hidden');
+  if (ringtone) { try { ringtone.stop(); } catch {} ringtone = null; }
+  await acceptCall(from, kind, false);
+}
+
+safeBind('incomingCallAccept', 'onclick', acceptIncomingCall);
+safeBind('incomingCallReject', 'onclick', rejectIncomingCall);
+
 async function acceptCall(from, kind, isCaller) {
-  callPeer = from;
+  callPeer = from; callMuted = false; callCamOff = false;
   $('callModal')?.classList.remove('hidden');
-  $('callTitle').textContent = (kind === 'voice' ? '📞 ' : '🎥 ') + from;
+  $('callTitle').textContent = (kind === 'voice' ? '📞 ' : '🎥 ') + (profileMap[from]?.name || from.split('@')[0]);
   localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: kind !== 'voice' }).catch(() => null);
   if (!localStream) { $('callStatus').textContent = 'ক্যামেরা/মাইক পাওয়া যায়নি'; return; }
-  if (kind === 'voice') { $('localVideo').style.display = 'none'; $('remoteVideo').style.display = 'none'; }
+  const hasVideo = localStream.getVideoTracks().length > 0;
+  $('localVideo').style.display = hasVideo ? '' : 'none';
+  $('remoteVideo').style.display = hasVideo ? '' : 'none';
   $('localVideo').srcObject = localStream;
+  $('callMute').textContent = '🎤';
+  $('callCamToggle').textContent = '📷';
   pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
   localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
   pc.ontrack = (e) => { $('remoteVideo').srcObject = e.streams[0]; };
@@ -403,6 +469,25 @@ async function acceptCall(from, kind, isCaller) {
   }
   $('callStatus').textContent = '🔊 সংযুক্ত...';
 }
+
+safeBind('callMute', 'onclick', () => {
+  if (!localStream) return;
+  callMuted = !callMuted;
+  localStream.getAudioTracks().forEach(t => t.enabled = !callMuted);
+  $('callMute').textContent = callMuted ? '🎤' : '🎤';
+  $('callMute').classList.toggle('muted', callMuted);
+});
+
+safeBind('callCamToggle', 'onclick', () => {
+  if (!localStream) return;
+  const tracks = localStream.getVideoTracks();
+  if (!tracks.length) return;
+  callCamOff = !callCamOff;
+  tracks.forEach(t => t.enabled = !callCamOff);
+  $('callCamToggle').textContent = callCamOff ? '📷' : '📷';
+  $('callCamToggle').classList.toggle('muted', callCamOff);
+});
+
 safeBind('voiceCallBtn', 'onclick', () => { if (currentPeer === 'group') return alert('1-1 চ্যাটে গিয়ে কল দিন।'); socket.emit('call:invite', { to: currentPeer, kind: 'voice' }); acceptCall(currentPeer, 'voice', true); });
 safeBind('videoCallBtn', 'onclick', () => { if (currentPeer === 'group') return alert('1-1 চ্যাটে গিয়ে কল দিন।'); socket.emit('call:invite', { to: currentPeer, kind: 'video' }); acceptCall(currentPeer, 'video', true); });
 safeBind('callHang', 'onclick', () => { if (callPeer) socket.emit('call:end', { to: callPeer }); endCallUI(); });
@@ -410,7 +495,7 @@ function endCallUI() {
   $('callModal')?.classList.add('hidden');
   $('callStatus').textContent = 'সংযোগ হচ্ছে...';
   try { pc?.close(); localStream?.getTracks().forEach(t => t.stop()); } catch {}
-  pc = null; callPeer = null;
+  pc = null; callPeer = null; callMuted = false; callCamOff = false;
 }
 
 // ---- Group Call (WebRTC Mesh) ----
