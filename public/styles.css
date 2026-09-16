@@ -153,6 +153,22 @@ body.purple .bubble.me{background:#4a148c}
 .media-preview-bar img,.media-preview-bar video{max-height:64px;border-radius:10px;border:2px solid #00a884}
 .media-preview-bar .remove-media{position:absolute;top:2px;left:2px;background:#ff3b30;border:none;color:#fff;border-radius:50%;width:22px;height:22px;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 4px #0005}
 
+/* Message context menu */
+.msg-menu{position:fixed;z-index:200;background:#1f2c34;border:1px solid #2a3942;border-radius:10px;box-shadow:0 4px 16px #0008;overflow:hidden;min-width:140px}
+.msg-menu-item{padding:10px 16px;cursor:pointer;font-size:14px;transition:background .15s;display:flex;align-items:center;gap:8px}
+.msg-menu-item:hover{background:#2a3942}
+.msg-menu-item.delete{color:#ff3b30}
+
+/* Edited tag */
+.edited-tag{font-size:10px;color:#8696a0;font-style:italic}
+
+/* Deleted message */
+.deleted-msg{opacity:0.5;font-style:italic}
+.deleted-msg .msg-text{color:#8696a0}
+
+/* Call message bubble */
+.call-bubble{align-self:center;background:#1a2c34!important;border:1px solid #2a3942;display:flex;align-items:center;gap:8px;padding:8px 16px!important;max-width:none!important;font-size:13px;color:#8696a0}
+
 @media(max-width:700px){.sidebar{width:70px}.me div,#search,.chat-item div,.side-foot{display:none}.chat-item{justify-content:center;padding:10px 4px}.side-actions button{font-size:16px}}
 
 /* Group video grid */

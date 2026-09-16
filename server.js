@@ -445,6 +445,66 @@ io.on('connection', (socket) => {
   socket.on('chat:typing', (d = {}) => socket.broadcast.emit('chat:typing', { from: email, to: d.to || 'group', isTyping: !!d.isTyping }));
   socket.on('chat:read', (d = {}) => socket.broadcast.emit('chat:read', { by: email, id: d.id }));
 
+  // Edit message
+  socket.on('chat:edit', (d = {}) => {
+    const msg = messages.find(m => m.id === d.id && m.from === email);
+    if (!msg) return;
+    msg.text = String(d.text || '').slice(0, 2000);
+    msg.edited = true;
+    msg.editedAt = Date.now();
+    if (msg.to === 'group') io.emit('chat:edited', { id: msg.id, text: msg.text, edited: true });
+    else {
+      socket.emit('chat:edited', { id: msg.id, text: msg.text, edited: true });
+      const target = onlineMap.get(msg.to);
+      if (target) io.to(target).emit('chat:edited', { id: msg.id, text: msg.text, edited: true });
+    }
+  });
+
+  // Delete message
+  socket.on('chat:delete', (d = {}) => {
+    const msg = messages.find(m => m.id === d.id && m.from === email);
+    if (!msg) return;
+    msg.deleted = true;
+    msg.text = '';
+    msg.media = null;
+    msg.voice = null;
+    if (msg.to === 'group') io.emit('chat:deleted', { id: msg.id });
+    else {
+      socket.emit('chat:deleted', { id: msg.id });
+      const target = onlineMap.get(msg.to);
+      if (target) io.to(target).emit('chat:deleted', { id: msg.id });
+    }
+  });
+
+  // Call log — save call event as message
+  socket.on('call:log', (d = {}) => {
+    const duration = d.duration || 0;
+    const kind = d.kind || 'voice';
+    const status = d.status || 'completed';
+    const to = d.to || 'group';
+    const mins = Math.floor(duration / 60);
+    const secs = duration % 60;
+    const durationStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+    const typeIcon = kind === 'video' ? '📹' : '📞';
+    const statusText = status === 'missed' ? 'Missed' : status === 'rejected' ? 'Declined' : durationStr;
+    const msg = {
+      id: 'm' + Date.now() + Math.floor(Math.random() * 9999),
+      from: email,
+      to: to,
+      text: `${typeIcon} ${kind === 'video' ? 'Video' : 'Voice'} call — ${statusText}`,
+      type: 'call',
+      callData: { kind, duration, status, startedAt: d.startedAt || Date.now(), endedAt: Date.now() },
+      at: d.startedAt || Date.now()
+    };
+    messages.push(msg);
+    if (to === 'group') io.emit('chat:message', msg);
+    else {
+      socket.emit('chat:message', msg);
+      const target = onlineMap.get(to);
+      if (target) io.to(target).emit('chat:message', msg);
+    }
+  });
+
   // ---- 1-1 Call signaling ----
   socket.on('call:invite', (d = {}) => {
     const target = onlineMap.get(d.to);

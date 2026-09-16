@@ -146,6 +146,26 @@ function connectSocket() {
     rejectIncomingCall();
   });
 
+  // Message edit/delete
+  socket.on('chat:edited', (d) => {
+    const el = document.querySelector('[data-msg-id="' + d.id + '"]');
+    if (el) {
+      const textEl = el.querySelector('.msg-text');
+      if (textEl) textEl.textContent = d.text;
+      if (!el.querySelector('.edited-tag')) {
+        const meta = el.querySelector('.meta');
+        if (meta) meta.insertAdjacentHTML('beforebegin', '<span class="edited-tag">(edited)</span>');
+      }
+    }
+  });
+  socket.on('chat:deleted', (d) => {
+    const el = document.querySelector('[data-msg-id="' + d.id + '"]');
+    if (el) {
+      el.querySelector('.msg-text').textContent = '🚫 This message was deleted';
+      el.classList.add('deleted-msg');
+    }
+  });
+
   // Group call events
   socket.on('groupcall:peers', handleGroupCallPeers);
   socket.on('groupcall:new-peer', handleGroupCallNewPeer);
@@ -229,10 +249,22 @@ function getUserInfo(email) {
 }
 function addMsg(m) {
   if (m.expiresAt && m.expiresAt < Date.now()) return;
+  if (m.deleted) return;
   const mine = m.from === me.email;
   const info = getUserInfo(m.from);
   const div = document.createElement('div');
+  div.setAttribute('data-msg-id', m.id);
+
+  // Call message — special styling
+  if (m.type === 'call') {
+    div.className = 'bubble call-bubble';
+    div.innerHTML = '<div class="call-msg-icon">📞</div><div class="msg-text">' + escapeHtml(m.text) + '</div><div class="meta">' + new Date(m.at).toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }) + '</div>';
+    const msgBox = $('messages'); if (msgBox) { msgBox.appendChild(div); msgBox.scrollTop = 99999; }
+    return;
+  }
+
   div.className = 'bubble' + (mine ? ' me' : '');
+  if (m.edited) div.classList.add('was-edited');
   const time = new Date(m.at).toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' });
   let inner = '';
   if (m.replyTo) inner += '<div class="reply">↩️ ' + escapeHtml(m.replyTo) + '</div>';
@@ -248,19 +280,58 @@ function addMsg(m) {
     else if (mt.startsWith('video/')) inner += '<video class="media-preview" controls src="' + m.media.url + '"></video>';
     else if (mt.startsWith('audio/')) inner += '<audio controls src="' + m.media.url + '"></audio>';
     else inner += '📄 <a href="' + m.media.url + '" download="' + (m.media.fileName || 'file') + '" style="color:#53bdeb">' + escapeHtml(m.media.fileName || 'ফাইল') + '</a>';
-    if (m.text && m.text !== m.media.fileName) inner += '<div>' + escapeHtml(m.text) + '</div>';
+    if (m.text && m.text !== m.media.fileName) inner += '<div class="msg-text">' + escapeHtml(m.text) + '</div>';
   } else if (m.type === 'voice' && m.voice) {
     inner += '🎤 <audio controls src="' + m.voice.url + '"></audio> <small>(' + m.voice.duration + 's)</small>';
   } else {
-    inner += escapeHtml(m.text);
+    inner += '<span class="msg-text">' + escapeHtml(m.text) + '</span>';
   }
+  if (m.edited) inner += ' <span class="edited-tag">(edited)</span>';
   inner += '<div class="meta">' + time + (mine ? ' <span class="tick">✓✓</span>' : '') + '</div>';
   div.innerHTML = inner;
+
+  // Right-click / long-press menu for edit/delete (own messages only)
+  if (mine) {
+    div.oncontextmenu = (e) => {
+      e.preventDefault();
+      showMsgMenu(e, m);
+    };
+  } else {
+    div.oncontextmenu = (e) => {
+      e.preventDefault();
+      const r = prompt('রিয়্যাকশন (❤️ 👍 😂 😮 😢):', '❤️');
+      if (r) div.innerHTML += ' ' + r;
+    };
+  }
   div.ondblclick = () => { replyTo = m.text || 'মেসেজ'; const rt = $('replyText'); if (rt) rt.textContent = replyTo.slice(0, 60); const rb = $('replyBar'); if (rb) rb.classList.remove('hidden'); };
   div.oncontextmenu = (e) => { e.preventDefault(); const r = prompt('রিয়্যাকশন (❤️ 👍 😂 😮 😢):', '❤️'); if (r) div.innerHTML += ' ' + r; };
   const msgBox = $('messages'); if (msgBox) { msgBox.appendChild(div); msgBox.scrollTop = 99999; }
   if (!mine) socket?.emit('chat:read', { id: m.id });
   if (m.expiresAt) setTimeout(() => div.remove(), m.expiresAt - Date.now());
+}
+
+// ---- Message context menu (edit/delete) ----
+function removeMsgMenu() { const old = document.querySelector('.msg-menu'); if (old) old.remove(); }
+function showMsgMenu(e, m) {
+  removeMsgMenu();
+  const menu = document.createElement('div');
+  menu.className = 'msg-menu';
+  menu.innerHTML = '<div class="msg-menu-item" data-action="edit">✏️ Edit</div><div class="msg-menu-item delete" data-action="delete">🗑️ Delete</div>';
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 160) + 'px';
+  menu.style.top = Math.min(e.clientY, window.innerHeight - 80) + 'px';
+  document.body.appendChild(menu);
+  menu.querySelector('[data-action="edit"]').onclick = () => { removeMsgMenu(); editMessage(m); };
+  menu.querySelector('[data-action="delete"]').onclick = () => { removeMsgMenu(); deleteMessage(m); };
+  setTimeout(() => document.addEventListener('click', removeMsgMenu, { once: true }), 10);
+}
+function editMessage(m) {
+  const newText = prompt('মেসেজ এডিট করুন:', m.text);
+  if (newText === null || newText.trim() === '' || newText === m.text) return;
+  socket.emit('chat:edit', { id: m.id, text: newText.trim() });
+}
+function deleteMessage(m) {
+  if (!confirm('এই মেসেজ ডিলিট করবেন?')) return;
+  socket.emit('chat:delete', { id: m.id });
 }
 
 // ---- Upload helper ----
@@ -402,6 +473,7 @@ window.removeUser = removeUser; window.resetPass = resetPass;
 // ---- 1-1 Calls (WebRTC) ----
 let pc = null, localStream = null, callPeer = null;
 let callMuted = false, callCamOff = false;
+let callStartTime = 0, callKind = 'voice';
 let incomingCallFrom = null, incomingCallKind = null;
 let ringtone = null;
 
@@ -442,6 +514,8 @@ function showIncomingCall(from, kind) {
 function rejectIncomingCall() {
   if (incomingCallFrom) {
     socket.emit('call:end', { to: incomingCallFrom });
+    // Log missed call
+    socket.emit('call:log', { to: incomingCallFrom, kind: incomingCallKind || 'voice', duration: 0, status: 'missed', startedAt: Date.now() });
     incomingCallFrom = null;
   }
   $('incomingCallModal')?.classList.add('hidden');
@@ -462,7 +536,7 @@ safeBind('incomingCallAccept', 'onclick', acceptIncomingCall);
 safeBind('incomingCallReject', 'onclick', rejectIncomingCall);
 
 async function acceptCall(from, kind, isCaller) {
-  callPeer = from; callMuted = false; callCamOff = false;
+  callPeer = from; callMuted = false; callCamOff = false; callStartTime = Date.now(); callKind = kind;
   $('callModal')?.classList.remove('hidden');
   // Set caller info
   const prof = profileMap[from] || {};
@@ -481,12 +555,24 @@ async function acceptCall(from, kind, isCaller) {
   pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
   localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
   pc.ontrack = (e) => {
-    // Remote stream received — show in background and update status
+    // Remote stream received
     $('callStatus').textContent = '🔊 Connected';
+    // Play remote audio
+    let remoteAudio = $('callModal')?.querySelector('.remote-audio');
+    if (!remoteAudio) {
+      remoteAudio = document.createElement('audio');
+      remoteAudio.className = 'remote-audio';
+      remoteAudio.autoplay = true;
+      $('callModal')?.appendChild(remoteAudio);
+    }
+    remoteAudio.srcObject = e.streams[0];
+    // Show remote video in background
     const rBg = $('remoteVideoBg');
     if (rBg) {
       rBg.srcObject = e.streams[0];
-      $('callScreen')?.classList.add('video-active');
+      if (e.streams[0].getVideoTracks().length > 0) {
+        $('callScreen')?.classList.add('video-active');
+      }
     }
   };
   pc.onicecandidate = (e) => { if (e.candidate) socket.emit('call:signal', { to: callPeer, signal: { candidate: e.candidate } }); };
@@ -517,12 +603,21 @@ safeBind('callCamToggle', 'onclick', () => {
 
 safeBind('voiceCallBtn', 'onclick', () => { if (currentPeer === 'group') return alert('1-1 চ্যাটে গিয়ে কল দিন।'); socket.emit('call:invite', { to: currentPeer, kind: 'voice' }); acceptCall(currentPeer, 'voice', true); });
 safeBind('videoCallBtn', 'onclick', () => { if (currentPeer === 'group') return alert('1-1 চ্যাটে গিয়ে কল দিন।'); socket.emit('call:invite', { to: currentPeer, kind: 'video' }); acceptCall(currentPeer, 'video', true); });
-safeBind('callHang', 'onclick', () => { if (callPeer) socket.emit('call:end', { to: callPeer }); endCallUI(); });
+safeBind('callHang', 'onclick', () => { logCall('completed'); if (callPeer) socket.emit('call:end', { to: callPeer }); endCallUI(); });
 function endCallUI() {
   $('callModal')?.classList.add('hidden');
-  $('callStatus').textContent = 'সংযোগ হচ্ছে...';
+  $('callStatus').textContent = 'Calling...';
+  $('remoteVideoBg')?.classList.remove('remote-video-bg');
   try { pc?.close(); localStream?.getTracks().forEach(t => t.stop()); } catch {}
+  // Stop remote audio
+  const rBg = $('remoteVideoBg'); if (rBg) rBg.srcObject = null;
+  const allAudios = $('callModal')?.querySelectorAll('audio'); if (allAudios) allAudios.forEach(a => { a.srcObject = null; a.remove(); });
   pc = null; callPeer = null; callMuted = false; callCamOff = false;
+}
+function logCall(status) {
+  if (!callPeer || !callStartTime) return;
+  const duration = Math.floor((Date.now() - callStartTime) / 1000);
+  socket.emit('call:log', { to: callPeer, kind: callKind, duration, status, startedAt: callStartTime });
 }
 
 // ---- Group Call (WebRTC Mesh) ----
