@@ -425,10 +425,12 @@ function showIncomingCall(from, kind) {
   const prof = profileMap[from] || {};
   const name = prof.name || from.split('@')[0];
   $('incomingCallerName').textContent = name;
-  $('incomingCallerKind').textContent = kind === 'voice' ? '📞 ভয়েস কল' : '🎥 ভিডিও কল';
+  $('incomingCallKind').textContent = kind === 'voice' ? 'Voice Call' : 'Video Call';
   const av = $('incomingCallerAvatar');
-  if (prof.avatar) av.innerHTML = '<img src="' + prof.avatar + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover">';
-  else av.textContent = name[0].toUpperCase();
+  if (av) {
+    if (prof.avatar) av.innerHTML = '<img src="' + prof.avatar + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover">';
+    else av.textContent = name[0].toUpperCase();
+  }
   // Play ringtone
   ringtone = createRingtone();
   // Vibrate on mobile
@@ -462,32 +464,46 @@ safeBind('incomingCallReject', 'onclick', rejectIncomingCall);
 async function acceptCall(from, kind, isCaller) {
   callPeer = from; callMuted = false; callCamOff = false;
   $('callModal')?.classList.remove('hidden');
-  $('callTitle').textContent = (kind === 'voice' ? '📞 ' : '🎥 ') + (profileMap[from]?.name || from.split('@')[0]);
+  // Set caller info
+  const prof = profileMap[from] || {};
+  const name = prof.name || from.split('@')[0];
+  $('callTitle').textContent = name;
+  const av = $('callAvatar');
+  if (av) {
+    if (prof.avatar) av.innerHTML = '<img src="' + prof.avatar + '">';
+    else av.textContent = name[0].toUpperCase();
+  }
   localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: kind !== 'voice' }).catch(() => null);
   if (!localStream) { $('callStatus').textContent = 'ক্যামেরা/মাইক পাওয়া যায়নি'; return; }
   const hasVideo = localStream.getVideoTracks().length > 0;
-  $('localVideo').style.display = hasVideo ? '' : 'none';
-  $('remoteVideo').style.display = hasVideo ? '' : 'none';
-  $('localVideo').srcObject = localStream;
-  $('callMute').textContent = '🎤';
-  $('callCamToggle').textContent = '📷';
+  $('callMute').classList.remove('active');
+  $('callCamToggle').classList.remove('active');
   pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
   localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-  pc.ontrack = (e) => { $('remoteVideo').srcObject = e.streams[0]; };
+  pc.ontrack = (e) => {
+    // Remote stream received — show in background and update status
+    $('callStatus').textContent = '🔊 Connected';
+    const rBg = $('remoteVideoBg');
+    if (rBg) {
+      rBg.srcObject = e.streams[0];
+      $('callScreen')?.classList.add('video-active');
+    }
+  };
   pc.onicecandidate = (e) => { if (e.candidate) socket.emit('call:signal', { to: callPeer, signal: { candidate: e.candidate } }); };
   if (isCaller) {
     const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
     socket.emit('call:signal', { to: callPeer, signal: pc.localDescription });
+    $('callStatus').textContent = 'Calling...';
+  } else {
+    $('callStatus').textContent = 'Ringing...';
   }
-  $('callStatus').textContent = '🔊 সংযুক্ত...';
 }
 
 safeBind('callMute', 'onclick', () => {
   if (!localStream) return;
   callMuted = !callMuted;
   localStream.getAudioTracks().forEach(t => t.enabled = !callMuted);
-  $('callMute').textContent = callMuted ? '🎤' : '🎤';
-  $('callMute').classList.toggle('muted', callMuted);
+  $('callMute').classList.toggle('active', callMuted);
 });
 
 safeBind('callCamToggle', 'onclick', () => {
@@ -496,8 +512,7 @@ safeBind('callCamToggle', 'onclick', () => {
   if (!tracks.length) return;
   callCamOff = !callCamOff;
   tracks.forEach(t => t.enabled = !callCamOff);
-  $('callCamToggle').textContent = callCamOff ? '📷' : '📷';
-  $('callCamToggle').classList.toggle('muted', callCamOff);
+  $('callCamToggle').classList.toggle('active', callCamOff);
 });
 
 safeBind('voiceCallBtn', 'onclick', () => { if (currentPeer === 'group') return alert('1-1 চ্যাটে গিয়ে কল দিন।'); socket.emit('call:invite', { to: currentPeer, kind: 'voice' }); acceptCall(currentPeer, 'voice', true); });
