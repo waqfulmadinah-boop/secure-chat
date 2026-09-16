@@ -392,6 +392,36 @@ app.get('/api/messages', authMiddleware, (req, res) => {
   res.json(visible);
 });
 
+// Edit message
+app.post('/api/messages/edit', authMiddleware, (req, res) => {
+  const { id, text } = req.body;
+  const msg = messages.find(m => m.id === id && m.from === req.email);
+  if (!msg) return res.status(404).json({ error: 'Message not found or not yours' });
+  if (msg.expiresAt && msg.expiresAt < Date.now()) return res.status(400).json({ error: 'Message expired' });
+  msg.text = String(text || '').slice(0, 2000);
+  msg.edited = true;
+  msg.editedAt = Date.now();
+  io.emit('chat:message:edit', msg);
+  res.json({ ok: true });
+});
+
+// Delete message
+app.post('/api/messages/delete', authMiddleware, (req, res) => {
+  const { id, forEveryone } = req.body;
+  const idx = messages.findIndex(m => m.id === id && m.from === req.email);
+  if (idx === -1) return res.status(404).json({ error: 'Message not found or not yours' });
+  if (forEveryone) {
+    messages.splice(idx, 1);
+    io.emit('chat:message:delete', { id, forEveryone: true });
+  } else {
+    // Just hide for sender
+    messages[idx].deletedFor = messages[idx].deletedFor || [];
+    if (!messages[idx].deletedFor.includes(req.email)) messages[idx].deletedFor.push(req.email);
+    io.emit('chat:message:delete', { id, forEveryone: false, for: req.email });
+  }
+  res.json({ ok: true });
+});
+
 // ---- Socket.io ----
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 50e6 });

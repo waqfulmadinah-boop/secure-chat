@@ -352,11 +352,14 @@ function showMsgMenu(e, m) {
 function editMessage(m) {
   const newText = prompt('মেসেজ এডিট করুন:', m.text);
   if (newText === null || newText.trim() === '' || newText === m.text) return;
-  socket.emit('chat:edit', { id: m.id, text: newText.trim() });
+  api('/api/messages/edit', { method: 'POST', body: JSON.stringify({ id: m.id, text: newText.trim() }) })
+    .catch(e => alert('⛔ ' + e.message));
 }
 function deleteMessage(m) {
-  if (!confirm('এই মেসেজ ডিলিট করবেন?')) return;
-  socket.emit('chat:delete', { id: m.id });
+  if (!confirm('এই মেসেজ ডিলিট করবেন?\n"OK" = সবার জন্য, "Cancel" = শুধু আপনার জন্য')) return;
+  const forEveryone = true; // user pressed OK
+  api('/api/messages/delete', { method: 'POST', body: JSON.stringify({ id: m.id, forEveryone }) })
+    .catch(e => alert('⛔ ' + e.message));
 }
 
 // ---- Upload helper ----
@@ -582,12 +585,17 @@ async function acceptCall(from, kind, isCaller) {
   pc.ontrack = (e) => {
     // Remote stream received
     $('callStatus').textContent = '🔊 Connected';
-    // Play remote audio — use the static element in HTML
-    const remoteAudio = $('remoteAudio');
-    if (remoteAudio) {
-      remoteAudio.srcObject = e.streams[0];
-      remoteAudio.play().catch(() => {});
+    // Play remote audio — create or use audio element
+    let remoteAudio = $('remoteAudio');
+    if (!remoteAudio) {
+      remoteAudio = document.createElement('audio');
+      remoteAudio.id = 'remoteAudio';
+      remoteAudio.autoplay = true;
+      remoteAudio.playsInline = true;
+      document.body.appendChild(remoteAudio);
     }
+    remoteAudio.srcObject = e.streams[0];
+    remoteAudio.play().catch(() => {});
     // Show remote video in background
     const rBg = $('remoteVideoBg');
     if (rBg) {
@@ -639,6 +647,14 @@ function endCallUI() {
 function logCall(status) {
   if (!callPeer || !callStartTime) return;
   const duration = Math.floor((Date.now() - callStartTime) / 1000);
+  // Also add to chat history
+  const prof = profileMap[callPeer] || {};
+  const name = prof.name || callPeer.split('@')[0];
+  const statusText = status === 'completed' ? '✅ উত্তরিত' : '❌ আনসওয়ারড';
+  const durText = duration > 0 ? ` — ${Math.floor(duration/60)}:${String(duration%60).padStart(2,'0')}` : '';
+  const text = `📞 ${callKind === 'voice' ? 'Voice' : 'Video'} call with ${name}: ${statusText}${durText}`;
+  socket.emit('chat:message', { to: callPeer, text, type: 'call' });
+  socket.emit('chat:message', { to: 'group', text: `[Call] ${text}`, type: 'call' });
   socket.emit('call:log', { to: callPeer, kind: callKind, duration, status, startedAt: callStartTime });
 }
 
