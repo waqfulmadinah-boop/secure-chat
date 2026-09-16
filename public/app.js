@@ -128,7 +128,17 @@ function connectSocket() {
   socket = io({ auth: { token } });
   socket.on('connect_error', () => { alert('⛔ সেশন শেষ।'); logout(); });
   socket.on('force-logout', (d) => { alert(d.reason || 'লগআউট'); logout(); });
-  socket.on('chat:message', (m) => { if (m.from === me.email || m.to === me.email) addMsg(m); });
+  socket.on('chat:message', (m) => {
+    if (m.from === me.email || m.to === me.email) {
+      if (m.from === currentPeer || m.to === currentPeer) {
+        addMsg(m);
+      } else {
+        // Show unread indicator on sidebar
+        const dot = $('dot-' + CSS.escape(m.from));
+        if (dot) dot.classList.add('on');
+      }
+    }
+  });
   socket.on('chat:typing', (d) => {
     if (d.from === me.email) return;
     const fromName = (users.find(u => u.email === d.from) || {}).name || d.from.split('@')[0];
