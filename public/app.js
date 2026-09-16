@@ -136,12 +136,16 @@ function connectSocket() {
     if (d.isTyping) setTimeout(() => { const tl2 = $('typingLine'); if (tl2) tl2.textContent = ''; }, 2500);
   });
   socket.on('presence', (d) => { updatePresence(d.onlineList || []); });
-  // Incoming call
-  socket.on('call:invite', (d) => {
-    showIncomingCall(d.from, d.kind);
-  });
-  socket.on('call:signal', async (d) => {
-    if (!pc) { console.log('call:signal received but no pc'); return; }
+  // Incoming call - queue signals until PC is ready
+  let pendingSignals = [];
+  function processPendingSignals() {
+    while (pendingSignals.length && pc) {
+      const d = pendingSignals.shift();
+      handleSignal(d);
+    }
+  }
+  async function handleSignal(d) {
+    if (!pc) { pendingSignals.push(d); return; }
     try {
       const s = d.signal;
       if (s && s.type === 'offer') {
@@ -155,7 +159,11 @@ function connectSocket() {
         await pc.addIceCandidate(s);
       }
     } catch (e) { console.error('signal error', e); }
+  }
+  socket.on('call:invite', (d) => {
+    showIncomingCall(d.from, d.kind);
   });
+  socket.on('call:signal', handleSignal);
   socket.on('call:end', () => {
     endCallUI();
     rejectIncomingCall();
@@ -572,13 +580,22 @@ async function acceptIncomingCall() {
   incomingCallFrom = null;
   $('incomingCallModal')?.classList.add('hidden');
   if (ringtone) { try { ringtone.stop(); } catch {} ringtone = null; }
-  await acceptCall(from, kind, false);
+  // Create remote audio element HERE (inside user gesture) so autoplay works
+  let remoteAudio = $('remoteAudio');
+  if (!remoteAudio) {
+    remoteAudio = document.createElement('audio');
+    remoteAudio.id = 'remoteAudio';
+    remoteAudio.autoplay = true;
+    remoteAudio.playsInline = true;
+    document.body.appendChild(remoteAudio);
+  }
+  await acceptCall(from, kind, false, remoteAudio);
 }
 
 safeBind('incomingCallAccept', 'onclick', acceptIncomingCall);
 safeBind('incomingCallReject', 'onclick', rejectIncomingCall);
 
-async function acceptCall(from, kind, isCaller) {
+async function acceptCall(from, kind, isCaller, remoteAudioEl) {
   callPeer = from; callMuted = false; callCamOff = false; callStartTime = Date.now(); callKind = kind;
   $('callModal')?.classList.remove('hidden');
   // Set caller info
@@ -600,22 +617,16 @@ async function acceptCall(from, kind, isCaller) {
   pc.ontrack = (e) => {
     // Remote stream received
     $('callStatus').textContent = '🔊 Connected';
-    // Play remote audio — create or use audio element
-    let remoteAudio = $('remoteAudio');
-    if (!remoteAudio) {
-      remoteAudio = document.createElement('audio');
-      remoteAudio.id = 'remoteAudio';
-      remoteAudio.autoplay = true;
-      remoteAudio.playsInline = true;
-      document.body.appendChild(remoteAudio);
+    const stream = e.streams[0];
+    if (remoteAudioEl && stream) {
+      remoteAudioEl.srcObject = stream;
+      remoteAudioEl.play().catch(() => {});
     }
-    remoteAudio.srcObject = e.streams[0];
-    remoteAudio.play().catch(() => {});
     // Show remote video in background
     const rBg = $('remoteVideoBg');
     if (rBg) {
-      rBg.srcObject = e.streams[0];
-      if (e.streams[0].getVideoTracks().length > 0) {
+      rBg.srcObject = stream;
+      if (stream.getVideoTracks().length > 0) {
         $('callScreen')?.classList.add('video-active');
       }
     }
@@ -646,8 +657,8 @@ safeBind('callCamToggle', 'onclick', () => {
   $('callCamToggle').classList.toggle('active', callCamOff);
 });
 
-safeBind('voiceCallBtn', 'onclick', () => { if (currentPeer === 'group') return alert('1-1 চ্যাটে গিয়ে কল দিন।'); socket.emit('call:invite', { to: currentPeer, kind: 'voice' }); acceptCall(currentPeer, 'voice', true); });
-safeBind('videoCallBtn', 'onclick', () => { if (currentPeer === 'group') return alert('1-1 চ্যাটে গিয়ে কল দিন।'); socket.emit('call:invite', { to: currentPeer, kind: 'video' }); acceptCall(currentPeer, 'video', true); });
+safeBind('voiceCallBtn', 'onclick', () => { if (currentPeer === 'group') return alert('1-1 চ্যাটে গিয়ে কল দিন।'); let remoteAudio = $('remoteAudio'); if (!remoteAudio) { remoteAudio = document.createElement('audio'); remoteAudio.id = 'remoteAudio'; remoteAudio.autoplay = true; remoteAudio.playsInline = true; document.body.appendChild(remoteAudio); } socket.emit('call:invite', { to: currentPeer, kind: 'voice' }); acceptCall(currentPeer, 'voice', true, remoteAudio); });
+safeBind('videoCallBtn', 'onclick', () => { if (currentPeer === 'group') return alert('1-1 চ্যাটে গিয়ে কল দিন।'); let remoteAudio = $('remoteAudio'); if (!remoteAudio) { remoteAudio = document.createElement('audio'); remoteAudio.id = 'remoteAudio'; remoteAudio.autoplay = true; remoteAudio.playsInline = true; document.body.appendChild(remoteAudio); } socket.emit('call:invite', { to: currentPeer, kind: 'video' }); acceptCall(currentPeer, 'video', true, remoteAudio); });
 safeBind('callHang', 'onclick', () => { logCall('completed'); if (callPeer) socket.emit('call:end', { to: callPeer }); endCallUI(); });
 function endCallUI() {
   $('callModal')?.classList.add('hidden');
