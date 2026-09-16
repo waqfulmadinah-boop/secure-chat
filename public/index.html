@@ -115,12 +115,18 @@
     </div>
 
     <div class="composer">
-      <label id="mediaBtn" for="mediaInput" class="compose-btn" title="ছবি/ভিডিও/ফাইল পাঠান">📎</label>
-      <input id="mediaInput" type="file" accept="image/*,video/*,audio/*,.pdf,.doc,.docx" class="hidden" multiple>
-      <button id="voiceTypeBtn" title="ভয়েস টাইপিং">🎙️</button>
-      <button id="voiceMsgBtn" title="ভয়েস মেসেজ রেকর্ড">🎤</button>
-      <input id="msgInput" placeholder="মেসেজ লিখুন..." autocomplete="off">
-      <button id="sendBtn">➤</button>
+      <div class="composer-left">
+        <label id="mediaBtn" for="mediaInput" class="compose-btn" title="ছবি/ভিডিও/ফাইল পাঠান">📎</label>
+        <input id="mediaInput" type="file" accept="image/*,video/*,audio/*,.pdf,.doc,.docx" class="hidden" multiple>
+      </div>
+      <div class="composer-center">
+        <input id="msgInput" placeholder="মেসেজ লিখুন..." autocomplete="off">
+      </div>
+      <div class="composer-right">
+        <button id="voiceTypeBtn" class="compose-btn" title="ভয়েস টাইপিং">🎙️</button>
+        <button id="sendBtn" class="send-btn" title="পাঠান">➤</button>
+        <button id="voiceMsgBtn" class="mic-btn" title="ভয়েস মেসেজ">🎤</button>
+      </div>
     </div>
   </main>
 </div>

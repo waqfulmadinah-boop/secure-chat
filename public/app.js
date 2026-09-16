@@ -297,14 +297,26 @@ async function send() {
   pendingMedia = []; replyTo = null;
   const bar = document.querySelector('.media-preview-bar'); if (bar) bar.remove();
   const rb = $('replyBar'); if (rb) rb.classList.add('hidden');
+  updateSendMic();
 }
 safeBind('sendBtn', 'onclick', send);
+// Toggle send/mic button based on input (WhatsApp-style)
+function updateSendMic() {
+  const input = $('msgInput');
+  const sendBtn = $('sendBtn');
+  const micBtn = $('voiceMsgBtn');
+  if (!input || !sendBtn || !micBtn) return;
+  const hasText = input.value.trim().length > 0 || pendingMedia.length > 0;
+  sendBtn.classList.toggle('visible', hasText);
+  micBtn.style.display = hasText ? 'none' : 'inline-flex';
+}
+safeBind('msgInput', 'oninput', updateSendMic);
 safeBind('msgInput', 'onkeydown', function(e) {
-  if (e.key === 'Enter') send();
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); updateSendMic(); }
   socket?.emit('chat:typing', { to: currentPeer, isTyping: true });
   clearTimeout(window._t); window._t = setTimeout(() => socket?.emit('chat:typing', { to: currentPeer, isTyping: false }), 1200);
 });
-window.addEventListener('voice-send', send);
+window.addEventListener('voice-send', () => { send(); updateSendMic(); });
 safeBind('replyCancel', 'onclick', () => { replyTo = null; const rb = $('replyBar'); if (rb) rb.classList.add('hidden'); });
 safeBind('search', 'oninput', (e) => {
   const q = e.target.value.toLowerCase();
@@ -688,7 +700,7 @@ safeBind('mediaInput', 'onchange', (e) => {
 function showMediaPreview() {
   const existing = document.querySelector('.media-preview-bar');
   if (existing) existing.remove();
-  if (!pendingMedia.length) return;
+  if (!pendingMedia.length) { updateSendMic(); return; }
   const bar = document.createElement('div');
   bar.className = 'media-preview-bar';
   pendingMedia.forEach((m, i) => {
