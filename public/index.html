@@ -70,24 +70,13 @@
     </div>
     <input id="search" placeholder="🔍 সার্চ...">
     <div id="chatList" class="chat-list"></div>
-    <div class="side-foot"><small>🔐 Secure • Disappearing • Voice</small></div>
+    <div class="side-foot"><small>🔐 Secure • Voice</small></div>
   </aside>
 
   <main class="chat-pane">
     <div class="chat-head">
-      <span id="peerAvatar" class="avatar">G</span>
-      <div class="peer-info"><b id="peerName">গ্রুপ চ্যাট</b><small id="peerStatus">—</small></div>
-      <div class="chat-tools">
-        <select id="disappear" title="Disappearing message">
-          <option value="">⏱️ Off</option>
-          <option value="60">⏱️ ১ মিনিট</option>
-          <option value="3600">⏱️ ১ ঘণ্টা</option>
-          <option value="86400">⏱️ ২৪ ঘণ্টা</option>
-        </select>
-        <button id="groupCallBtn" title="গ্রুপ কল (ভিডিও)">👥📞</button>
-        <button id="voiceCallBtn" title="ভয়েস কল">📞</button>
-        <button id="videoCallBtn" title="ভিডিও কল">🎥</button>
-      </div>
+      <span id="peerAvatar" class="avatar">—</span>
+      <div class="peer-info"><b id="peerName">—</b><small id="peerStatus">—</small></div>
     </div>
 
     <div id="replyBar" class="reply-bar hidden">↩️ <span id="replyText"></span><button id="replyCancel">✕</button></div>
@@ -195,69 +184,6 @@
     <p id="adminMsg" style="min-height:18px;color:#ffd60a"></p>
     <div id="adminList" style="text-align:left;max-height:42vh;overflow:auto"></div>
     <button id="adminClose">বন্ধ</button>
-  </div>
-</div>
-
-<!-- Hidden audio for call remote stream -->
-<audio id="remoteAudio" autoplay playsinline style="display:none"></audio>
-
-<!-- 1-1 Call modal -->
-<div id="callModal" class="modal hidden">
-  <div class="call-screen" id="callScreen">
-    <video id="remoteVideoBg" class="remote-video-bg" autoplay playsinline></video>
-    <div class="call-top-bar">
-      <span class="call-encrypted">🔒 End-to-end encrypted</span>
-    </div>
-    <div class="call-center">
-      <div class="call-avatar-large" id="callAvatar">📞</div>
-      <h2 class="call-name" id="callTitle">—</h2>
-      <p class="call-status-text" id="callStatus">Calling...</p>
-    </div>
-    <div class="call-bottom-bar">
-      <div class="call-controls-left">
-        <button id="callMute" class="call-ctrl-btn" title="মিউট"><span>🎤</span></button>
-        <button id="callCamToggle" class="call-ctrl-btn" title="ক্যাম"><span>📷</span></button>
-      </div>
-      <div class="call-controls-center">
-        <button class="call-ctrl-btn" title="স্পিকার"><span>🔊</span></button>
-        <button class="call-ctrl-btn" title="ভিডিও যোগ"><span>📹</span></button>
-        <button class="call-ctrl-btn" title="ব্লুটুথ"><span>🎧</span></button>
-      </div>
-      <div class="call-controls-right">
-        <button id="callHang" class="call-end-btn" title="কাটো"><span>📞</span></button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- Incoming Call modal -->
-<div id="incomingCallModal" class="modal hidden">
-  <div class="call-screen incoming-screen">
-    <div class="call-center">
-      <div class="call-avatar-large pulse-ring" id="incomingCallerAvatar">📞</div>
-      <h2 class="call-name" id="incomingCallerName">—</h2>
-      <p class="call-status-text" id="incomingCallKind">Incoming call...</p>
-    </div>
-    <div class="incoming-bottom-bar">
-      <div class="incoming-actions">
-        <button id="incomingCallReject" class="call-end-btn"><span>📞</span><small>Decline</small></button>
-        <button id="incomingCallAccept" class="call-accept-btn-large"><span>📞</span><small>Accept</small></button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- Group Call modal -->
-<div id="groupCallModal" class="modal hidden">
-  <div class="modal-card" style="min-width:90vw;min-height:70vh;display:flex;flex-direction:column">
-    <h3 id="groupCallTitle">👥 গ্রুপ কল</h3>
-    <div id="groupVideoGrid" class="group-video-grid"></div>
-    <p id="groupCallStatus">সংযোগ হচ্ছে...</p>
-    <div style="display:flex;gap:8px;justify-content:center">
-      <button id="groupCallMute" style="background:#2a3942">🎤 মিউট</button>
-      <button id="groupCallCamToggle" style="background:#2a3942">📷 ক্যাম বন্ধ</button>
-      <button id="groupCallHang" style="background:#ff3b30">🔴 ছেড়ে দিন</button>
-    </div>
   </div>
 </div>
 

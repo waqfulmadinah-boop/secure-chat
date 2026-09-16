@@ -2,7 +2,7 @@
 const $ = (id) => document.getElementById(id);
 function safeBind(id, evt, fn) { const el = $(id); if (el) el[evt] = fn; }
 let token = '';
-let me = null, socket = null, users = [], currentPeer = 'group';
+let me = null, socket = null, users = [], currentPeer = null;
 let replyTo = null, statuses = JSON.parse(localStorage.getItem('sc_status') || '[]');
 let pendingMedia = [];
 let profileMap = {};
@@ -128,7 +128,7 @@ function connectSocket() {
   socket = io({ auth: { token } });
   socket.on('connect_error', () => { alert('⛔ সেশন শেষ।'); logout(); });
   socket.on('force-logout', (d) => { alert(d.reason || 'লগআউট'); logout(); });
-  socket.on('chat:message', (m) => { if (m.to === 'group' || m.from === me.email || m.to === me.email) addMsg(m); });
+  socket.on('chat:message', (m) => { if (m.from === me.email || m.to === me.email) addMsg(m); });
   socket.on('chat:typing', (d) => {
     if (d.from === me.email) return;
     const fromName = (users.find(u => u.email === d.from) || {}).name || d.from.split('@')[0];
@@ -136,38 +136,6 @@ function connectSocket() {
     if (d.isTyping) setTimeout(() => { const tl2 = $('typingLine'); if (tl2) tl2.textContent = ''; }, 2500);
   });
   socket.on('presence', (d) => { updatePresence(d.onlineList || []); });
-  // Incoming call - queue signals until PC is ready
-  let pendingSignals = [];
-  function processPendingSignals() {
-    while (pendingSignals.length && pc) {
-      const d = pendingSignals.shift();
-      handleSignal(d);
-    }
-  }
-  async function handleSignal(d) {
-    if (!pc) { pendingSignals.push(d); return; }
-    try {
-      const s = d.signal;
-      if (s && s.type === 'offer') {
-        await pc.setRemoteDescription(s);
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket.emit('call:signal', { to: d.from, signal: pc.localDescription });
-      } else if (s && s.type === 'answer') {
-        await pc.setRemoteDescription(s);
-      } else if (s && s.candidate) {
-        await pc.addIceCandidate(s);
-      }
-    } catch (e) { console.error('signal error', e); }
-  }
-  socket.on('call:invite', (d) => {
-    showIncomingCall(d.from, d.kind);
-  });
-  socket.on('call:signal', handleSignal);
-  socket.on('call:end', () => {
-    endCallUI();
-    rejectIncomingCall();
-  });
 
   // Message edit/delete
   socket.on('chat:edited', (d) => {
@@ -188,23 +156,12 @@ function connectSocket() {
       el.classList.add('deleted-msg');
     }
   });
-
-  // Group call events
-  socket.on('groupcall:peers', handleGroupCallPeers);
-  socket.on('groupcall:new-peer', handleGroupCallNewPeer);
-  socket.on('groupcall:signal', handleGroupCallSignal);
-  socket.on('groupcall:peer-left', handleGroupCallPeerLeft);
 }
 
 // ---- Chat list ----
 function renderChatList() {
   const box = $('chatList'); if (!box) return;
   box.innerHTML = '';
-  const group = document.createElement('div');
-  group.className = 'chat-item' + (currentPeer === 'group' ? ' active' : '');
-  group.innerHTML = '<span class="avatar">G</span><div><b>গ্রুপ চ্যাট</b><br><small>সবাই একসাথে</small></div>';
-  group.onclick = () => switchPeer('group');
-  box.appendChild(group);
   const others = [...new Set([...users.map(u => u.email), ...guessPeers()])].filter(e => e !== me.email);
   others.forEach(email => {
     const el = document.createElement('div');
@@ -248,19 +205,19 @@ function switchPeer(p) {
   const prof = profileMap[p] || {};
   const displayName = prof.name || p.split('@')[0];
   const avatar = prof.avatar;
-  const pn = $('peerName'); if (pn) pn.textContent = p === 'group' ? 'গ্রুপ চ্যাট' : displayName;
+  const pn = $('peerName'); if (pn) pn.textContent = displayName;
   const pa = $('peerAvatar');
   if (pa) {
     if (avatar) pa.innerHTML = '<img src="' + avatar + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover">';
-    else pa.textContent = (p === 'group' ? 'G' : displayName[0]).toUpperCase();
+    else pa.textContent = displayName[0].toUpperCase();
   }
   const msgBox = $('messages'); if (msgBox) msgBox.innerHTML = '';
-  api('/api/messages').then(ms => ms.filter(m => p === 'group' ? m.to === 'group' : (m.from === p && m.to === me.email) || (m.from === me.email && m.to === p)).forEach(addMsg));
+  api('/api/messages').then(ms => ms.filter(m => (m.from === p && m.to === me.email) || (m.from === me.email && m.to === p)).forEach(addMsg));
   renderChatList();
 }
 function updatePresence(list) {
   const ps = $('peerStatus');
-  if (ps) ps.textContent = currentPeer === 'group' ? ('🟢 ' + list.length + ' জন অনলাইন') : (list.includes(currentPeer) ? '🟢 অনলাইন' : '⚪ অফলাইন');
+  if (ps) ps.textContent = list.includes(currentPeer) ? '🟢 অনলাইন' : '⚪ অফলাইন';
   list.forEach(e => { const d = $('dot-' + CSS.escape(e)); if (d) d.classList.add('on'); });
 }
 
@@ -271,20 +228,11 @@ function getUserInfo(email) {
   return { displayName: p.name || u.name || email.split('@')[0], avatar: p.avatar || u.avatar || null };
 }
 function addMsg(m) {
-  if (m.expiresAt && m.expiresAt < Date.now()) return;
   if (m.deleted) return;
   const mine = m.from === me.email;
   const info = getUserInfo(m.from);
   const div = document.createElement('div');
   div.setAttribute('data-msg-id', m.id);
-
-  // Call message — special styling
-  if (m.type === 'call') {
-    div.className = 'bubble call-bubble';
-    div.innerHTML = '<div class="call-msg-icon">📞</div><div class="msg-text">' + escapeHtml(m.text) + '</div><div class="meta">' + new Date(m.at).toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }) + '</div>';
-    const msgBox = $('messages'); if (msgBox) { msgBox.appendChild(div); msgBox.scrollTop = 99999; }
-    return;
-  }
 
   div.className = 'bubble' + (mine ? ' me' : '');
   if (m.edited) div.classList.add('was-edited');
@@ -330,7 +278,6 @@ function addMsg(m) {
   div.oncontextmenu = (e) => { e.preventDefault(); showMsgMenu(e, m); };
   const msgBox = $('messages'); if (msgBox) { msgBox.appendChild(div); msgBox.scrollTop = 99999; }
   if (!mine) socket?.emit('chat:read', { id: m.id });
-  if (m.expiresAt) setTimeout(() => div.remove(), m.expiresAt - Date.now());
 }
 
 // ---- Message context menu (edit/delete/reaction) ----
@@ -341,8 +288,8 @@ function showMsgMenu(e, m) {
   const menu = document.createElement('div');
   menu.className = 'msg-menu';
   let html = '';
-  if (mine && m.type !== 'call') html += '<div class="msg-menu-item" data-action="edit">✏️ Edit</div>';
-  if (mine && m.type !== 'call') html += '<div class="msg-menu-item delete" data-action="delete">🗑️ Delete</div>';
+  if (mine) html += '<div class="msg-menu-item" data-action="edit">✏️ Edit</div>';
+  if (mine) html += '<div class="msg-menu-item delete" data-action="delete">🗑️ Delete</div>';
   html += '<div class="msg-menu-item" data-action="react">❤️ React</div>';
   html += '<div class="msg-menu-item" data-action="reply">↩️ Reply</div>';
   html += '<div class="msg-menu-item" data-action="copy">📋 Copy</div>';
@@ -403,18 +350,15 @@ async function send() {
   let t = $('msgInput') ? $('msgInput').value.trim() : '';
   if (!t && !pendingMedia.length) return;
   if (/[\u0980-\u09FF]$/.test(t) && !/[।?!]$/.test(t)) t += '।';
-  const disappearSec = Number($('disappear') ? $('disappear').value : 0) || null;
   for (const m of pendingMedia) {
     try {
-      // Upload file to server, get URL
       const uploaded = await uploadFile(m.file);
-      socket.emit('chat:message', { to: currentPeer, text: t || m.fileName, media: { url: uploaded.url, mimeType: uploaded.mimeType, fileName: uploaded.fileName }, replyTo, disappearSec });
+      socket.emit('chat:message', { to: currentPeer, text: t || m.fileName, media: { url: uploaded.url, mimeType: uploaded.mimeType, fileName: uploaded.fileName }, replyTo });
     } catch (e) {
-      // Fallback: send as base64
-      socket.emit('chat:message', { to: currentPeer, text: t || m.fileName, media: { url: m.dataUrl, mimeType: m.mimeType, fileName: m.fileName }, replyTo, disappearSec });
+      socket.emit('chat:message', { to: currentPeer, text: t || m.fileName, media: { url: m.dataUrl, mimeType: m.mimeType, fileName: m.fileName }, replyTo });
     }
   }
-  if (!pendingMedia.length) socket.emit('chat:message', { to: currentPeer, text: t, replyTo, disappearSec });
+  if (!pendingMedia.length) socket.emit('chat:message', { to: currentPeer, text: t, replyTo });
   if ($('msgInput')) $('msgInput').value = '';
   pendingMedia = []; replyTo = null;
   const bar = document.querySelector('.media-preview-bar'); if (bar) bar.remove();
@@ -520,343 +464,6 @@ safeBind('adminAdd', 'onclick', async () => {
 async function removeUser(email) { if (!confirm(email + ' কে সরাবেন?')) return; try { await api('/api/admin/remove-user', { method: 'POST', body: JSON.stringify({ email }) }); await refreshAdminList(); } catch (e) { alert(e.message); } }
 async function resetPass(email) { const p = prompt(email + ' এর নতুন পাসওয়ার্ড (৬+):'); if (!p) return; try { await api('/api/admin/reset-password', { method: 'POST', body: JSON.stringify({ email, password: p }) }); alert('✅ রিসেট হয়েছে'); } catch (e) { alert(e.message); } }
 window.removeUser = removeUser; window.resetPass = resetPass;
-
-// ---- 1-1 Calls (WebRTC) ----
-let pc = null, localStream = null, callPeer = null;
-let callMuted = false, callCamOff = false;
-let callStartTime = 0, callKind = 'voice';
-let incomingCallFrom = null, incomingCallKind = null;
-let ringtone = null;
-
-function createRingtone() {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain); gain.connect(ctx.destination);
-    osc.frequency.value = 440; osc.type = 'sine';
-    gain.gain.value = 0.3;
-    osc.start();
-    return { osc, ctx, stop: () => { osc.stop(); ctx.close(); } };
-  } catch { return null; }
-}
-
-function showIncomingCall(from, kind) {
-  incomingCallFrom = from;
-  incomingCallKind = kind;
-  $('incomingCallModal')?.classList.remove('hidden');
-  const prof = profileMap[from] || {};
-  const name = prof.name || from.split('@')[0];
-  $('incomingCallerName').textContent = name;
-  $('incomingCallKind').textContent = kind === 'voice' ? 'Voice Call' : 'Video Call';
-  const av = $('incomingCallerAvatar');
-  if (av) {
-    if (prof.avatar) av.innerHTML = '<img src="' + prof.avatar + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover">';
-    else av.textContent = name[0].toUpperCase();
-  }
-  // Play ringtone
-  ringtone = createRingtone();
-  // Vibrate on mobile
-  if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
-  // Auto-reject after 30 seconds
-  setTimeout(() => { if (incomingCallFrom) rejectIncomingCall(); }, 30000);
-}
-
-function rejectIncomingCall() {
-  if (incomingCallFrom) {
-    socket.emit('call:end', { to: incomingCallFrom });
-    // Log missed call
-    socket.emit('call:log', { to: incomingCallFrom, kind: incomingCallKind || 'voice', duration: 0, status: 'missed', startedAt: Date.now() });
-    incomingCallFrom = null;
-  }
-  $('incomingCallModal')?.classList.add('hidden');
-  if (ringtone) { try { ringtone.stop(); } catch {} ringtone = null; }
-}
-
-async function acceptIncomingCall() {
-  if (!incomingCallFrom) return;
-  const from = incomingCallFrom;
-  const kind = incomingCallKind;
-  incomingCallFrom = null;
-  $('incomingCallModal')?.classList.add('hidden');
-  if (ringtone) { try { ringtone.stop(); } catch {} ringtone = null; }
-  // Create remote audio element HERE (inside user gesture) so autoplay works
-  let remoteAudio = $('remoteAudio');
-  if (!remoteAudio) {
-    remoteAudio = document.createElement('audio');
-    remoteAudio.id = 'remoteAudio';
-    remoteAudio.autoplay = true;
-    remoteAudio.playsInline = true;
-    document.body.appendChild(remoteAudio);
-  }
-  await acceptCall(from, kind, false, remoteAudio);
-}
-
-safeBind('incomingCallAccept', 'onclick', acceptIncomingCall);
-safeBind('incomingCallReject', 'onclick', rejectIncomingCall);
-
-async function acceptCall(from, kind, isCaller, remoteAudioEl) {
-  callPeer = from; callMuted = false; callCamOff = false; callStartTime = Date.now(); callKind = kind;
-  $('callModal')?.classList.remove('hidden');
-  // Set caller info
-  const prof = profileMap[from] || {};
-  const name = prof.name || from.split('@')[0];
-  $('callTitle').textContent = name;
-  const av = $('callAvatar');
-  if (av) {
-    if (prof.avatar) av.innerHTML = '<img src="' + prof.avatar + '">';
-    else av.textContent = name[0].toUpperCase();
-  }
-  localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: kind !== 'voice' }).catch(() => null);
-  if (!localStream) { $('callStatus').textContent = 'ক্যামেরা/মাইক পাওয়া যায়নি'; return; }
-  const hasVideo = localStream.getVideoTracks().length > 0;
-  $('callMute').classList.remove('active');
-  $('callCamToggle').classList.remove('active');
-  pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-  localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-  pc.ontrack = (e) => {
-    // Remote stream received
-    $('callStatus').textContent = '🔊 Connected';
-    const stream = e.streams[0];
-    if (remoteAudioEl && stream) {
-      remoteAudioEl.srcObject = stream;
-      remoteAudioEl.play().catch(() => {});
-    }
-    // Show remote video in background
-    const rBg = $('remoteVideoBg');
-    if (rBg) {
-      rBg.srcObject = stream;
-      if (stream.getVideoTracks().length > 0) {
-        $('callScreen')?.classList.add('video-active');
-      }
-    }
-  };
-  pc.onicecandidate = (e) => { if (e.candidate) socket.emit('call:signal', { to: callPeer, signal: { candidate: e.candidate } }); };
-  if (isCaller) {
-    const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
-    socket.emit('call:signal', { to: callPeer, signal: pc.localDescription });
-    $('callStatus').textContent = 'Calling...';
-  } else {
-    $('callStatus').textContent = 'Ringing...';
-  }
-}
-
-safeBind('callMute', 'onclick', () => {
-  if (!localStream) return;
-  callMuted = !callMuted;
-  localStream.getAudioTracks().forEach(t => t.enabled = !callMuted);
-  $('callMute').classList.toggle('active', callMuted);
-});
-
-safeBind('callCamToggle', 'onclick', () => {
-  if (!localStream) return;
-  const tracks = localStream.getVideoTracks();
-  if (!tracks.length) return;
-  callCamOff = !callCamOff;
-  tracks.forEach(t => t.enabled = !callCamOff);
-  $('callCamToggle').classList.toggle('active', callCamOff);
-});
-
-safeBind('voiceCallBtn', 'onclick', () => { if (currentPeer === 'group') return alert('1-1 চ্যাটে গিয়ে কল দিন।'); let remoteAudio = $('remoteAudio'); if (!remoteAudio) { remoteAudio = document.createElement('audio'); remoteAudio.id = 'remoteAudio'; remoteAudio.autoplay = true; remoteAudio.playsInline = true; document.body.appendChild(remoteAudio); } socket.emit('call:invite', { to: currentPeer, kind: 'voice' }); acceptCall(currentPeer, 'voice', true, remoteAudio); });
-safeBind('videoCallBtn', 'onclick', () => { if (currentPeer === 'group') return alert('1-1 চ্যাটে গিয়ে কল দিন।'); let remoteAudio = $('remoteAudio'); if (!remoteAudio) { remoteAudio = document.createElement('audio'); remoteAudio.id = 'remoteAudio'; remoteAudio.autoplay = true; remoteAudio.playsInline = true; document.body.appendChild(remoteAudio); } socket.emit('call:invite', { to: currentPeer, kind: 'video' }); acceptCall(currentPeer, 'video', true, remoteAudio); });
-safeBind('callHang', 'onclick', () => { logCall('completed'); if (callPeer) socket.emit('call:end', { to: callPeer }); endCallUI(); });
-function endCallUI() {
-  $('callModal')?.classList.add('hidden');
-  $('callScreen')?.classList.remove('video-active');
-  $('callStatus').textContent = 'Calling...';
-  try { pc?.close(); localStream?.getTracks().forEach(t => t.stop()); } catch {}
-  // Stop remote audio/video
-  const rBg = $('remoteVideoBg'); if (rBg) rBg.srcObject = null;
-  const rAudio = $('remoteAudio'); if (rAudio) rAudio.srcObject = null;
-  pc = null; callPeer = null; callMuted = false; callCamOff = false;
-}
-function logCall(status) {
-  if (!callPeer || !callStartTime) return;
-  const duration = Math.floor((Date.now() - callStartTime) / 1000);
-  // Also add to chat history
-  const prof = profileMap[callPeer] || {};
-  const name = prof.name || callPeer.split('@')[0];
-  const statusText = status === 'completed' ? '✅ উত্তরিত' : '❌ আনসওয়ারড';
-  const durText = duration > 0 ? ` — ${Math.floor(duration/60)}:${String(duration%60).padStart(2,'0')}` : '';
-  const text = `📞 ${callKind === 'voice' ? 'Voice' : 'Video'} call with ${name}: ${statusText}${durText}`;
-  socket.emit('chat:message', { to: callPeer, text, type: 'call' });
-  socket.emit('chat:message', { to: 'group', text: `[Call] ${text}`, type: 'call' });
-  socket.emit('call:log', { to: callPeer, kind: callKind, duration, status, startedAt: callStartTime });
-}
-
-// ---- Group Call (WebRTC Mesh) ----
-let groupCallActive = false;
-let groupCallMuted = false;
-let groupCallCamOff = false;
-let groupCallStream = null;
-let groupCallRoomId = 'group';
-const groupPeers = new Map(); // email -> { pc, videoEl }
-
-safeBind('groupCallBtn', 'onclick', () => {
-  if (groupCallActive) return;
-  groupCallRoomId = 'group';
-  startGroupCall();
-});
-
-async function startGroupCall() {
-  try {
-    groupCallStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-  } catch {
-    groupCallStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  }
-  groupCallActive = true;
-  $('groupCallModal')?.classList.remove('hidden');
-  $('groupCallTitle').textContent = '👥 গ্রুপ কল — গ্রুপ চ্যাট';
-  $('groupCallStatus').textContent = 'যোগদান হচ্ছে...';
-  // Show local video
-  updateGroupVideoGrid();
-  addGroupVideo(me.email, groupCallStream, true);
-  socket.emit('groupcall:join', { roomId: groupCallRoomId });
-}
-
-function addGroupVideo(email, stream, isLocal) {
-  const grid = $('groupVideoGrid');
-  if (!grid) return;
-  // Remove existing for this email
-  const existing = grid.querySelector('[data-email="' + CSS.escape(email) + '"]');
-  if (existing) existing.remove();
-
-  const wrap = document.createElement('div');
-  wrap.className = 'group-video-item';
-  wrap.setAttribute('data-email', email);
-  const vid = document.createElement('video');
-  vid.srcObject = stream;
-  vid.muted = !!isLocal;
-  vid.playsInline = true;
-  vid.autoplay = true;
-  if (isLocal) vid.style.transform = 'scaleX(-1)';
-  const label = document.createElement('div');
-  label.className = 'group-video-label';
-  const prof = profileMap[email] || {};
-  label.textContent = prof.name || email.split('@')[0];
-  wrap.appendChild(vid);
-  wrap.appendChild(label);
-  grid.appendChild(wrap);
-}
-
-function updateGroupVideoGrid() {
-  const grid = $('groupVideoGrid');
-  if (!grid) return;
-  // Add local video
-  addGroupVideo(me.email, groupCallStream, true);
-}
-
-function handleGroupCallPeers(d) {
-  // d.peers = array of emails already in the room
-  // We need to create peer connections to each
-  for (const peerEmail of d.peers) {
-    createGroupPeerConnection(peerEmail, true); // we are the initiator
-  }
-  $('groupCallStatus').textContent = '🔗 ' + d.peers.length + ' জন সংযুক্ত';
-}
-
-async function handleGroupCallNewPeer(d) {
-  // A new peer joined — they will create the offer, we just wait
-  createGroupPeerConnection(d.from, false);
-  $('groupCallStatus').textContent = '🔗 ' + (groupPeers.size + 1) + ' জন সংযুক্ত';
-}
-
-async function createGroupPeerConnection(peerEmail, isInitiator) {
-  if (groupPeers.has(peerEmail)) return;
-  const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-  groupPeers.set(peerEmail, { pc });
-
-  groupCallStream.getTracks().forEach(t => pc.addTrack(t, groupCallStream));
-
-  pc.ontrack = (e) => {
-    addGroupVideo(peerEmail, e.streams[0], false);
-  };
-
-  pc.onicecandidate = (e) => {
-    if (e.candidate) socket.emit('groupcall:signal', { to: peerEmail, signal: { candidate: e.candidate }, roomId: groupCallRoomId });
-  };
-
-  pc.onconnectionstatechange = () => {
-    if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-      removeGroupVideo(peerEmail);
-      groupPeers.delete(peerEmail);
-    }
-  };
-
-  if (isInitiator) {
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    socket.emit('groupcall:signal', { to: peerEmail, signal: pc.localDescription, roomId: groupCallRoomId });
-  }
-}
-
-async function handleGroupCallSignal(d) {
-  const peer = groupPeers.get(d.from);
-  if (!peer) {
-    // First signal from this peer — create our side
-    await createGroupPeerConnection(d.from, false);
-  }
-  const peer2 = groupPeers.get(d.from);
-  if (!peer2) return;
-  try {
-    if (d.signal.candidate) {
-      await peer2.pc.addIceCandidate(d.signal.candidate);
-    } else if (d.signal.sdp) {
-      await peer2.pc.setRemoteDescription(d.signal);
-      if (d.signal.type === 'offer') {
-        const answer = await peer2.pc.createAnswer();
-        await peer2.pc.setLocalDescription(answer);
-        socket.emit('groupcall:signal', { to: d.from, signal: peer2.pc.localDescription, roomId: groupCallRoomId });
-      }
-    }
-  } catch (e) { console.error('Group call signal error:', e); }
-}
-
-function handleGroupCallPeerLeft(d) {
-  removeGroupVideo(d.from);
-  const peer = groupPeers.get(d.from);
-  if (peer) { try { peer.pc.close(); } catch {} groupPeers.delete(d.from); }
-  $('groupCallStatus').textContent = '🔗 ' + (groupPeers.size + 1) + ' জন সংযুক্ত';
-}
-
-function removeGroupVideo(email) {
-  const grid = $('groupVideoGrid');
-  if (!grid) return;
-  const el = grid.querySelector('[data-email="' + CSS.escape(email) + '"]');
-  if (el) el.remove();
-}
-
-safeBind('groupCallHang', 'onclick', () => {
-  socket.emit('groupcall:leave', { roomId: groupCallRoomId });
-  endGroupCallUI();
-});
-
-safeBind('groupCallMute', 'onclick', () => {
-  if (!groupCallStream) return;
-  groupCallMuted = !groupCallMuted;
-  groupCallStream.getAudioTracks().forEach(t => t.enabled = !groupCallMuted);
-  $('groupCallMute').textContent = groupCallMuted ? '🎤 আনমিউট' : '🎤 মিউট';
-});
-
-safeBind('groupCallCamToggle', 'onclick', () => {
-  if (!groupCallStream) return;
-  const videoTracks = groupCallStream.getVideoTracks();
-  if (!videoTracks.length) return;
-  groupCallCamOff = !groupCallCamOff;
-  videoTracks.forEach(t => t.enabled = !groupCallCamOff);
-  $('groupCallCamToggle').textContent = groupCallCamOff ? '📷 ক্যাম চালু' : '📷 ক্যাম বন্ধ';
-});
-
-function endGroupCallUI() {
-  $('groupCallModal')?.classList.add('hidden');
-  for (const [email, peer] of groupPeers) { try { peer.pc.close(); } catch {} }
-  groupPeers.clear();
-  if (groupCallStream) { groupCallStream.getTracks().forEach(t => t.stop()); groupCallStream = null; }
-  groupCallActive = false; groupCallMuted = false; groupCallCamOff = false;
-  const grid = $('groupVideoGrid'); if (grid) grid.innerHTML = '';
-  $('groupCallMute').textContent = '🎤 মিউট';
-  $('groupCallCamToggle').textContent = '📷 ক্যাম বন্ধ';
-}
 
 // ---- Media Upload ----
 safeBind('mediaBtn', 'onclick', (e) => {
