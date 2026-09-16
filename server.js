@@ -16,6 +16,8 @@ const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me';
 const GMAIL_USER = process.env.GMAIL_USER || '';
 const GMAIL_PASS = process.env.GMAIL_PASS || '';
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_KEY = process.env.SUPABASE_KEY || '';
 let ALLOWED_EMAILS = (process.env.ALLOWED_EMAILS || '')
   .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 const ADMIN_EMAIL = 'waqfulmadinah@gmail.com';
@@ -114,17 +116,26 @@ app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
 
-// ---- File uploads (multer) ----
+// ---- File uploads (multer temp) ----
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadsDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname) || '.' + (file.mimetype.split('/')[1] || 'bin');
-    cb(null, Date.now() + '-' + Math.random().toString(36).slice(2, 8) + ext);
-  }
-});
+const storage = multer.memoryStorage();
 const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
+
+// ---- Supabase Storage helper ----
+async function uploadToSupabase(buffer, fileName, mimeType) {
+  if (!SUPABASE_URL || !SUPABASE_KEY) return null;
+  const ext = path.extname(fileName) || '.' + (mimeType.split('/')[1] || 'bin');
+  const folder = mimeType.split('/')[0] || 'file';
+  const path = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2,8)}${ext}`;
+  const r = await fetch(`${SUPABASE_URL}/storage/v1/object/media/${path}`, {
+    method: 'POST',
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': mimeType, 'x-upsert': 'true' },
+    body: buffer
+  });
+  if (!r.ok) { console.error('Supabase upload error:', r.status, await r.text()); return null; }
+  return `${SUPABASE_URL}/storage/v1/object/public/media/${path}`;
+}
 
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: (res, p) => {
@@ -309,10 +320,19 @@ app.post('/api/change-password', authMiddleware, (req, res) => {
 });
 
 // File upload
-app.post('/api/upload', authMiddleware, upload.single('file'), (req, res) => {
+app.post('/api/upload', authMiddleware, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'ফাইল পাওয়া যায়নি।' });
-  const url = '/uploads/' + req.file.filename;
-  res.json({ url, fileName: req.file.originalname, mimeType: req.file.mimetype, size: req.file.size });
+  try {
+    const supabaseUrl = await uploadToSupabase(req.file.buffer, req.file.originalname, req.file.mimetype);
+    if (supabaseUrl) {
+      return res.json({ url: supabaseUrl, fileName: req.file.originalname, mimeType: req.file.mimetype, size: req.file.size });
+    }
+  } catch (e) { console.error('Supabase upload failed, falling back to local:', e.message); }
+  // Fallback: local storage
+  const ext = path.extname(req.file.originalname) || '.' + (req.file.mimetype.split('/')[1] || 'bin');
+  const fname = Date.now() + '-' + Math.random().toString(36).slice(2, 8) + ext;
+  fs.writeFileSync(path.join(uploadsDir, fname), req.file.buffer);
+  res.json({ url: '/uploads/' + fname, fileName: req.file.originalname, mimeType: req.file.mimetype, size: req.file.size });
 });
 
 // Admin
