@@ -127,14 +127,14 @@ async function uploadToSupabase(buffer, fileName, mimeType) {
   if (!SUPABASE_URL || !SUPABASE_KEY) return null;
   const ext = path.extname(fileName) || '.' + (mimeType.split('/')[1] || 'bin');
   const folder = mimeType.split('/')[0] || 'file';
-  const path = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2,8)}${ext}`;
-  const r = await fetch(`${SUPABASE_URL}/storage/v1/object/media/${path}`, {
+  const storePath = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2,8)}${ext}`;
+  const r = await fetch(`${SUPABASE_URL}/storage/v1/object/Media/${storePath}`, {
     method: 'POST',
     headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': mimeType, 'x-upsert': 'true' },
     body: buffer
   });
   if (!r.ok) { console.error('Supabase upload error:', r.status, await r.text()); return null; }
-  return `${SUPABASE_URL}/storage/v1/object/public/media/${path}`;
+  return `${SUPABASE_URL}/storage/v1/object/public/Media/${storePath}`;
 }
 
 app.use(express.static(path.join(__dirname, 'public'), {
