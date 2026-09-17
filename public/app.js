@@ -133,7 +133,9 @@ function connectSocket() {
       if (m.from === currentPeer || m.to === currentPeer) {
         addMsg(m);
       } else {
-        // Show unread indicator on sidebar
+        // Incoming message from another user — notify
+        if (m.from !== me.email) playNotifSound();
+        if (m.from !== me.email && m.from !== me.email) showBrowserNotification(m);
         const dot = $('dot-' + CSS.escape(m.from));
         if (dot) dot.classList.add('on');
       }
@@ -401,6 +403,29 @@ safeBind('search', 'oninput', (e) => {
 
 function logout() { token = ''; localStorage.removeItem('sc_token'); location.reload(); }
 safeBind('logoutBtn', 'onclick', logout);
+
+// ---- Notifications ----
+function playNotifSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.frequency.value = 880; osc.type = 'sine';
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+    osc.start(); osc.stop(ctx.currentTime + 0.3);
+  } catch {}
+}
+function showBrowserNotification(m) {
+  if (Notification.permission !== 'granted') return;
+  const name = (profileMap[m.from] || {}).name || m.from.split('@')[0];
+  const body = m.text || (m.media ? '📎 ' + (m.media.fileName || 'ফাইল') : '🎤 ভয়েস মেসেজ');
+  try { new Notification(name, { body, icon: '/icon-192.svg', tag: 'madani-msg' }); } catch {}
+}
+if ('Notification' in window && Notification.permission === 'default') {
+  Notification.requestPermission();
+}
 
 // ---- Voice typing ----
 safeBind('voiceTypeBtn', 'onclick', () => {
